@@ -495,7 +495,7 @@ impl Repository {
 
     pub async fn reminder_events(&self) -> AppResult<Vec<ReminderEvent>> {
         Ok(sqlx::query_as(
-            "SELECT e.account_id,e.calendar_id,e.id AS event_id,e.title,e.location,e.start_time,e.end_time,e.all_day,e.raw_json AS event_json,c.raw_json AS calendar_json FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.deleted=0 AND c.deleted=0",
+            "SELECT e.account_id,e.calendar_id,e.id AS event_id,e.title,e.location,e.start_time,e.end_time,e.all_day,e.raw_json AS event_json,c.raw_json AS calendar_json FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.deleted=0 AND c.deleted=0 AND date(substr(e.start_time,1,10)) BETWEEN date('now','-1 day') AND date('now','+29 days')",
         )
         .fetch_all(&self.pool)
         .await?)
