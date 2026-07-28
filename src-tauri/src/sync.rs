@@ -173,12 +173,14 @@ impl SyncEngine {
             .repo
             .sync_token(account_id, "events", &calendar.id)
             .await?;
+        let mut full_resync = token.is_none();
         let result = match self
             .event_pages(account_id, &calendar.id, token.as_deref())
             .await
         {
             Ok(result) => result,
             Err(error) if error.is_gone() && token.is_some() => {
+                full_resync = true;
                 self.repo
                     .clear_sync_token(account_id, "events", &calendar.id)
                     .await?;
@@ -189,6 +191,7 @@ impl SyncEngine {
             Err(error) => return Err(api_error(error)),
         };
         let mut changed = 0;
+        let mut active_ids = Vec::new();
         for event in result.items {
             let event_id = event
                 .get("id")
@@ -200,12 +203,18 @@ impl SyncEngine {
                     .await?;
                 changed += 1;
             } else {
+                active_ids.push(event_id.to_owned());
                 changed += u32::from(
                     self.repo
                         .upsert_event(account_id, &calendar.id, &event, false)
                         .await?,
                 );
             }
+        }
+        if full_resync {
+            self.repo
+                .mark_missing_events_deleted(account_id, &calendar.id, &active_ids)
+                .await?;
         }
         self.repo
             .set_sync_state(
@@ -379,7 +388,21 @@ impl SyncEngine {
                         payload.as_ref(),
                         None,
                     )
-                    .await?;
+                    .await;
+                let result = match result {
+                    Ok(result) => result,
+                    Err(error) if error.is_conflict() => {
+                        let existing_url = GoogleClient::calendar_url(&[
+                            "calendars",
+                            &mutation.calendar_id,
+                            "events",
+                            &mutation.event_id,
+                        ])
+                        .map_err(internal_api_error)?;
+                        Some(self.google.get(&mutation.account_id, existing_url).await?)
+                    }
+                    Err(error) => return Err(error),
+                };
                 return self.save_mutation_result(mutation, result).await;
             }
             "update" | "rsvp" => (Method::PATCH, payload.as_ref()),
@@ -399,7 +422,17 @@ impl SyncEngine {
                 body,
                 mutation.base_etag.as_deref(),
             )
-            .await?;
+            .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error)
+                if mutation.operation == "delete"
+                    && error.status == reqwest::StatusCode::NOT_FOUND =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
         self.save_mutation_result(mutation, result).await
     }
 

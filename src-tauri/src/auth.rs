@@ -190,6 +190,10 @@ impl AuthService {
         Ok(value)
     }
 
+    pub async fn invalidate_access_token(&self, account_id: &str) {
+        self.access_tokens.lock().await.remove(account_id);
+    }
+
     pub async fn revoke(&self, account_id: &str) -> AppResult<()> {
         if let Ok(token) = load_refresh_token(account_id).await {
             let _ = self

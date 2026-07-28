@@ -1,8 +1,11 @@
-use std::str::FromStr;
+use std::{path::Path, time::Duration};
 
 use chrono::Utc;
 use serde_json::Value;
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{
+    SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
+};
 
 use crate::{
     error::{AppError, AppResult},
@@ -28,12 +31,58 @@ pub struct PendingMutation {
     pub attempts: i64,
 }
 
+#[derive(sqlx::FromRow)]
+struct CalendarRow {
+    id: String,
+    account_id: String,
+    name: String,
+    description: Option<String>,
+    color: Option<String>,
+    access_role: String,
+    primary_calendar: i64,
+    selected: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct EventRow {
+    id: String,
+    calendar_id: String,
+    title: String,
+    start_time: String,
+    end_time: String,
+    all_day: i64,
+    etag: Option<String>,
+    pending: i64,
+    raw_json: String,
+    access_role: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct TaskRow {
+    id: String,
+    title: String,
+    notes: Option<String>,
+    status: String,
+    due: Option<String>,
+    completed: Option<String>,
+}
+
 impl Repository {
-    pub async fn open(path: &str) -> AppResult<Self> {
-        let options = SqliteConnectOptions::from_str(path)?
+    pub async fn open(path: &Path) -> AppResult<Self> {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
             .create_if_missing(true)
-            .foreign_keys(true);
-        let pool = SqlitePool::connect_with(options).await?;
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(Duration::from_secs(5));
+        Self::connect(options, 5).await
+    }
+
+    async fn connect(options: SqliteConnectOptions, max_connections: u32) -> AppResult<Self> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(max_connections)
+            .connect_with(options)
+            .await?;
         MIGRATOR
             .run(&pool)
             .await
@@ -43,7 +92,13 @@ impl Repository {
 
     #[cfg(test)]
     pub async fn memory() -> AppResult<Self> {
-        Self::open("sqlite::memory:").await
+        Self::connect(
+            SqliteConnectOptions::new()
+                .filename(":memory:")
+                .foreign_keys(true),
+            1,
+        )
+        .await
     }
 
     pub async fn accounts(&self) -> AppResult<Vec<Account>> {
@@ -80,23 +135,23 @@ impl Repository {
     }
 
     pub async fn calendars(&self) -> AppResult<Vec<Calendar>> {
-        let rows: Vec<(String, String, String, Option<String>, Option<String>, String, i64, i64)> = sqlx::query_as(
-            "SELECT id,account_id,name,description,COALESCE(background_color,color),access_role,primary_calendar,selected FROM calendars WHERE deleted=0 ORDER BY primary_calendar DESC,name",
+        let rows: Vec<CalendarRow> = sqlx::query_as(
+            "SELECT id,account_id,name,description,COALESCE(background_color,color) AS color,access_role,primary_calendar,selected FROM calendars WHERE deleted=0 ORDER BY primary_calendar DESC,name",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
             .map(|row| Calendar {
-                id: row.0,
-                account_id: row.1,
-                name: row.2,
-                description: row.3,
-                color: row.4,
-                read_only: row.5 == "reader" || row.5 == "freeBusyReader",
-                access_role: row.5,
-                primary: row.6 != 0,
-                selected: row.7 != 0,
+                id: row.id,
+                account_id: row.account_id,
+                name: row.name,
+                description: row.description,
+                color: row.color,
+                read_only: row.access_role == "reader" || row.access_role == "freeBusyReader",
+                access_role: row.access_role,
+                primary: row.primary_calendar != 0,
+                selected: row.selected != 0,
             })
             .collect())
     }
@@ -111,6 +166,7 @@ impl Repository {
 
     pub async fn upsert_calendar(&self, account_id: &str, raw: &Value) -> AppResult<bool> {
         let id = text(raw, "id")?;
+        let raw_json = raw.to_string();
         let changed = sqlx::query_scalar::<_, String>(
             "SELECT raw_json FROM calendars WHERE account_id=? AND id=?",
         )
@@ -118,7 +174,7 @@ impl Repository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?
-        .is_none_or(|old| old != raw.to_string());
+        .is_none_or(|old| old != raw_json);
         sqlx::query(
             "INSERT INTO calendars(account_id,id,name,description,color,background_color,foreground_color,access_role,primary_calendar,selected,deleted,etag,raw_json,updated_at) \
              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,id) DO UPDATE SET name=excluded.name,description=excluded.description,color=excluded.color,background_color=excluded.background_color,foreground_color=excluded.foreground_color,access_role=excluded.access_role,primary_calendar=excluded.primary_calendar,selected=excluded.selected,deleted=excluded.deleted,etag=excluded.etag,raw_json=excluded.raw_json,updated_at=excluded.updated_at",
@@ -128,7 +184,7 @@ impl Repository {
         .bind(raw.get("backgroundColor").and_then(Value::as_str)).bind(raw.get("foregroundColor").and_then(Value::as_str))
         .bind(raw.get("accessRole").and_then(Value::as_str).unwrap_or("reader")).bind(bool_int(raw.get("primary")))
         .bind(bool_int(raw.get("selected").or_else(|| raw.get("primary")))).bind(bool_int(raw.get("deleted")))
-        .bind(raw.get("etag").and_then(Value::as_str)).bind(raw.to_string()).bind(Utc::now().to_rfc3339())
+        .bind(raw.get("etag").and_then(Value::as_str)).bind(raw_json).bind(Utc::now().to_rfc3339())
         .execute(&self.pool).await?;
         Ok(changed)
     }
@@ -153,7 +209,7 @@ impl Repository {
     }
 
     pub async fn events(&self, start: &str, end: &str) -> AppResult<Vec<CalendarEvent>> {
-        let rows: Vec<(String, String, String, String, String, i64, Option<String>, i64, String, String)> = sqlx::query_as(
+        let rows: Vec<EventRow> = sqlx::query_as(
             "SELECT e.id,e.calendar_id,e.title,e.start_time,e.end_time,e.all_day,e.etag,e.pending,e.raw_json,c.access_role FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.deleted=0 AND e.start_time < ? AND e.end_time > ? ORDER BY e.start_time",
         ).bind(end).bind(start).fetch_all(&self.pool).await?;
         rows.into_iter().map(event_from_row).collect()
@@ -187,6 +243,7 @@ impl Repository {
         let id = text(raw, "id")?;
         let start = google_time(raw.get("start"))?;
         let end = google_time(raw.get("end"))?;
+        let raw_json = raw.to_string();
         let changed = sqlx::query_scalar::<_, String>(
             "SELECT raw_json FROM events WHERE account_id=? AND calendar_id=? AND id=?",
         )
@@ -195,7 +252,7 @@ impl Repository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?
-        .is_none_or(|old| old != raw.to_string());
+        .is_none_or(|old| old != raw_json);
         sqlx::query(
             "INSERT INTO events(account_id,calendar_id,id,title,description,location,start_time,end_time,all_day,status,etag,updated_google,raw_json,pending,deleted,updated_at) \
              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,calendar_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,location=excluded.location,start_time=excluded.start_time,end_time=excluded.end_time,all_day=excluded.all_day,status=excluded.status,etag=excluded.etag,updated_google=excluded.updated_google,raw_json=excluded.raw_json,pending=excluded.pending,deleted=excluded.deleted,updated_at=excluded.updated_at",
@@ -203,7 +260,7 @@ impl Repository {
         .bind(raw.get("description").and_then(Value::as_str)).bind(raw.get("location").and_then(Value::as_str))
         .bind(&start).bind(&end).bind(bool_int(raw.get("start").and_then(|v| v.get("date")).map(|_| &Value::Bool(true))))
         .bind(raw.get("status").and_then(Value::as_str).unwrap_or("confirmed")).bind(raw.get("etag").and_then(Value::as_str))
-        .bind(raw.get("updated").and_then(Value::as_str)).bind(raw.to_string()).bind(i64::from(pending))
+        .bind(raw.get("updated").and_then(Value::as_str)).bind(raw_json).bind(i64::from(pending))
         .bind(i64::from(raw.get("status").and_then(Value::as_str) == Some("cancelled"))).bind(Utc::now().to_rfc3339())
         .execute(&self.pool).await?;
         Ok(changed)
@@ -228,13 +285,39 @@ impl Repository {
         Ok(())
     }
 
+    pub async fn mark_missing_events_deleted(
+        &self,
+        account_id: &str,
+        calendar_id: &str,
+        ids: &[String],
+    ) -> AppResult<()> {
+        sqlx::query(
+            "UPDATE events SET deleted=1 WHERE account_id=? AND calendar_id=? AND pending=0",
+        )
+        .bind(account_id)
+        .bind(calendar_id)
+        .execute(&self.pool)
+        .await?;
+        for id in ids {
+            sqlx::query(
+                "UPDATE events SET deleted=0 WHERE account_id=? AND calendar_id=? AND id=?",
+            )
+            .bind(account_id)
+            .bind(calendar_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
     pub async fn event(
         &self,
         account_id: &str,
         calendar_id: &str,
         event_id: &str,
     ) -> AppResult<CalendarEvent> {
-        let row: (String, String, String, String, String, i64, Option<String>, i64, String, String) = sqlx::query_as(
+        let row: EventRow = sqlx::query_as(
             "SELECT e.id,e.calendar_id,e.title,e.start_time,e.end_time,e.all_day,e.etag,e.pending,e.raw_json,c.access_role FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.account_id=? AND e.calendar_id=? AND e.id=?",
         ).bind(account_id).bind(calendar_id).bind(event_id).fetch_optional(&self.pool).await?
         .ok_or_else(|| AppError::NotFound(format!("event {event_id}")))?;
@@ -277,7 +360,7 @@ impl Repository {
                 .await?;
         let mut result = Vec::new();
         for (account_id, id, title) in lists {
-            let rows: Vec<(String, String, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
+            let rows: Vec<TaskRow> = sqlx::query_as(
                 "SELECT id,title,notes,status,due,completed FROM tasks WHERE account_id=? AND task_list_id=? ORDER BY position",
             ).bind(&account_id).bind(&id).fetch_all(&self.pool).await?;
             result.push(TaskList {
@@ -288,12 +371,12 @@ impl Repository {
                 tasks: rows
                     .into_iter()
                     .map(|r| Task {
-                        id: r.0,
-                        title: r.1,
-                        notes: r.2,
-                        status: r.3,
-                        due: r.4,
-                        completed: r.5,
+                        id: r.id,
+                        title: r.title,
+                        notes: r.notes,
+                        status: r.status,
+                        due: r.due,
+                        completed: r.completed,
                         read_only: true,
                     })
                     .collect(),
@@ -434,21 +517,8 @@ fn bool_int(value: Option<&Value>) -> i64 {
     i64::from(value.and_then(Value::as_bool).unwrap_or(false))
 }
 
-fn event_from_row(
-    row: (
-        String,
-        String,
-        String,
-        String,
-        String,
-        i64,
-        Option<String>,
-        i64,
-        String,
-        String,
-    ),
-) -> AppResult<CalendarEvent> {
-    let raw: Value = serde_json::from_str(&row.8)?;
+fn event_from_row(row: EventRow) -> AppResult<CalendarEvent> {
+    let raw: Value = serde_json::from_str(&row.raw_json)?;
     let attendees = serde_json::from_value(
         raw.get("attendees")
             .cloned()
@@ -462,9 +532,9 @@ fn event_from_row(
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
     Ok(CalendarEvent {
-        id: row.0,
-        calendar_id: row.1,
-        title: row.2,
+        id: row.id,
+        calendar_id: row.calendar_id,
+        title: row.title,
         description: raw
             .get("description")
             .and_then(Value::as_str)
@@ -473,9 +543,9 @@ fn event_from_row(
             .get("location")
             .and_then(Value::as_str)
             .map(str::to_owned),
-        start: row.3,
-        end: row.4,
-        all_day: row.5 != 0,
+        start: row.start_time,
+        end: row.end_time,
+        all_day: row.all_day != 0,
         color: raw
             .get("colorId")
             .and_then(Value::as_str)
@@ -485,7 +555,9 @@ fn event_from_row(
             .and_then(Value::as_str)
             .unwrap_or("confirmed")
             .to_owned(),
-        read_only: row.9 == "reader" || row.9 == "freeBusyReader",
+        read_only: row.access_role == "reader"
+            || row.access_role == "freeBusyReader"
+            || raw.get("locked").and_then(Value::as_bool) == Some(true),
         attendees,
         reminders,
         recurrence: raw
@@ -499,8 +571,8 @@ fn event_from_row(
                     .collect()
             })
             .unwrap_or_default(),
-        etag: row.6,
-        pending: row.7 != 0,
+        etag: row.etag,
+        pending: row.pending != 0,
     })
 }
 

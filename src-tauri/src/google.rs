@@ -102,28 +102,43 @@ impl GoogleClient {
         body: Option<&Value>,
         etag: Option<&str>,
     ) -> Result<Option<Value>, ApiError> {
-        let token = self
-            .auth
-            .access_token(account_id)
-            .await
-            .map_err(auth_error)?;
-        let mut request = self.http.request(method, url).bearer_auth(token);
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        if let Some(etag) = etag {
-            request = request.header(reqwest::header::IF_MATCH, etag);
-        }
-        let response = request.send().await.map_err(network_error)?;
-        let status = response.status();
-        if status.is_success() {
-            if status == StatusCode::NO_CONTENT {
-                return Ok(None);
+        for attempt in 0..=3 {
+            let token = self
+                .auth
+                .access_token(account_id)
+                .await
+                .map_err(auth_error)?;
+            let mut request = self
+                .http
+                .request(method.clone(), url.clone())
+                .bearer_auth(token);
+            if let Some(body) = body {
+                request = request.json(body);
             }
-            return response.json().await.map(Some).map_err(network_error);
+            if let Some(etag) = etag {
+                request = request.header(reqwest::header::IF_MATCH, etag);
+            }
+            let response = request.send().await.map_err(network_error)?;
+            let status = response.status();
+            if status.is_success() {
+                if status == StatusCode::NO_CONTENT {
+                    return Ok(None);
+                }
+                return response.json().await.map(Some).map_err(network_error);
+            }
+            let body = response.text().await.unwrap_or_default();
+            let error = classify_error(status, &body);
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 {
+                self.auth.invalidate_access_token(account_id).await;
+                continue;
+            }
+            if error.is_transient() && attempt < 3 {
+                tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                continue;
+            }
+            return Err(error);
         }
-        let body = response.text().await.unwrap_or_default();
-        Err(classify_error(status, &body))
+        unreachable!("request retry loop always returns")
     }
 }
 

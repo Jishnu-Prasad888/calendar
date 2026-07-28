@@ -106,7 +106,18 @@ impl EventInput {
             "recurrence": self.recurrence,
         });
         if !self.attendees.is_empty() {
-            event["attendees"] = serde_json::to_value(&self.attendees).unwrap_or_default();
+            event["attendees"] = Value::Array(
+                self.attendees
+                    .iter()
+                    .map(|attendee| {
+                        let mut value = serde_json::json!({"email": attendee.email});
+                        if let Some(name) = &attendee.display_name {
+                            value["displayName"] = Value::String(name.clone());
+                        }
+                        value
+                    })
+                    .collect(),
+            );
         }
         if !self.reminders.is_empty() {
             event["reminders"] =
