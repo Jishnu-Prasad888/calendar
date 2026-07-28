@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, State};
 
 use crate::{
-    AppState,
+    AppState, desktop,
     error::{AppError, AppResult},
     model::{
         Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, Preferences, SyncState,
@@ -211,10 +211,21 @@ pub async fn respond_to_event(
 #[tauri::command]
 pub async fn update_preferences(
     input: Preferences,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<Preferences> {
     input.validate().map_err(AppError::Validation)?;
-    state.repo.set_preferences(&input).await?;
+    let _guard = state.preferences_lock.lock().await;
+    let current = state.repo.preferences().await?;
+    if let Some(enabled) = desktop::autostart_change(current.autostart, input.autostart) {
+        desktop::set_autostart(&app, enabled)?;
+        if let Err(error) = state.repo.set_preferences(&input).await {
+            let _ = desktop::set_autostart(&app, current.autostart);
+            return Err(error);
+        }
+    } else {
+        state.repo.set_preferences(&input).await?;
+    }
     Ok(input)
 }
 

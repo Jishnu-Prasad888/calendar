@@ -76,6 +76,20 @@ struct TaskRow {
     raw_json: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct ReminderEvent {
+    pub account_id: String,
+    pub calendar_id: String,
+    pub event_id: String,
+    pub title: String,
+    pub location: Option<String>,
+    pub start_time: String,
+    pub end_time: String,
+    pub all_day: i64,
+    pub event_json: String,
+    pub calendar_json: String,
+}
+
 impl Repository {
     pub async fn open(path: &Path) -> AppResult<Self> {
         let options = SqliteConnectOptions::new()
@@ -476,6 +490,58 @@ impl Repository {
     pub async fn set_preferences(&self, value: &Preferences) -> AppResult<()> {
         sqlx::query("INSERT INTO preferences(singleton,json) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET json=excluded.json")
             .bind(serde_json::to_string(value)?).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn reminder_events(&self) -> AppResult<Vec<ReminderEvent>> {
+        Ok(sqlx::query_as(
+            "SELECT e.account_id,e.calendar_id,e.id AS event_id,e.title,e.location,e.start_time,e.end_time,e.all_day,e.raw_json AS event_json,c.raw_json AS calendar_json FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.deleted=0 AND c.deleted=0 AND date(substr(e.start_time,1,10)) BETWEEN date('now','-1 day') AND date('now','+29 days')",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn claim_reminder(
+        &self,
+        event: &ReminderEvent,
+        reminder_time: &str,
+        delivered_at: &str,
+    ) -> AppResult<bool> {
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO delivered_reminders(account_id,calendar_id,event_id,reminder_time,delivered_at) VALUES(?,?,?,?,?)",
+        )
+        .bind(&event.account_id)
+        .bind(&event.calendar_id)
+        .bind(&event.event_id)
+        .bind(reminder_time)
+        .bind(delivered_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn release_reminder(
+        &self,
+        event: &ReminderEvent,
+        reminder_time: &str,
+    ) -> AppResult<()> {
+        sqlx::query(
+            "DELETE FROM delivered_reminders WHERE account_id=? AND calendar_id=? AND event_id=? AND reminder_time=?",
+        )
+        .bind(&event.account_id)
+        .bind(&event.calendar_id)
+        .bind(&event.event_id)
+        .bind(reminder_time)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn prune_delivered_reminders(&self, before: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM delivered_reminders WHERE delivered_at < ?")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
