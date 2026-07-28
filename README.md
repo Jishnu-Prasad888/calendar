@@ -1,20 +1,68 @@
 # Clay Calendar
 
-A claymorphic Tauri desktop client for Google Calendar on Linux and Windows.
+A claymorphic Google Calendar desktop client built with Tauri, Rust, React, and TypeScript. It targets Windows and Linux.
 
-## Google OAuth setup
+## Features
 
-1. In Google Cloud Console, enable Google Calendar API and Google Tasks API.
-2. Configure the OAuth consent screen and add the Calendar and read-only Tasks scopes.
-3. Create an OAuth 2.0 client ID with application type **Desktop app**. Do not create or ship a client secret.
-4. Set `GOOGLE_CLIENT_ID` in the environment before compiling or running Tauri, for example `GOOGLE_CLIENT_ID=... npm run tauri dev`.
+- Month, week, day, year, schedule, and four-day calendar views
+- Standard event creation, editing, deletion, recurrence, attendees, RSVP, reminders, privacy, and availability
+- Multiple Google accounts and calendars
+- Incremental bidirectional Calendar synchronization with an offline mutation queue
+- Read-only Google Tasks page
+- Native popup reminders, system tray operation, and optional launch at startup
+- Configurable local clay theme with light, dark, and system modes
 
-The identifier is embedded at Rust compile time. The app fails during startup with a configuration error if it is absent. `.env.example` documents the value but Tauri does not automatically load `.env`; use your shell or CI secret/configuration mechanism.
+Calendar creation/sharing, Meet creation, attachments, free/busy assistance, appointment schedules, Workspace room discovery, and Tasks mutations are intentionally outside this project's scope.
 
-OAuth uses the system browser, S256 PKCE, CSRF state, and a random `127.0.0.1` callback port. Refresh tokens are stored in Windows Credential Manager or Linux Secret Service. Access tokens exist only in memory and are never returned through Tauri commands.
+## Google Setup
 
-## Backend
+1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/).
+2. Enable **Google Calendar API** and **Google Tasks API**.
+3. Configure the OAuth consent screen. Testing mode is sufficient for personal use, but every account must be added under **Test users**.
+4. Add these scopes:
+   - `openid`, `email`, and `profile`
+   - `https://www.googleapis.com/auth/calendar`
+   - `https://www.googleapis.com/auth/tasks.readonly`
+5. Create an OAuth client with application type **Desktop app**.
+6. Export the client ID before Rust compilation:
 
-The Tauri backend owns an embedded-migration SQLite cache under the platform app-data directory. It incrementally synchronizes calendar lists and events, caches Tasks read-only, and retries offline event mutations with ETag preconditions. A sync-token HTTP 410 causes one controlled full resync of that resource.
+```bash
+export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+npm run tauri dev
+```
 
-On Linux, a running Secret Service provider (for example GNOME Keyring or KeePassXC Secret Service integration) is required to add an account.
+The desktop client ID is embedded in the executable and is not a secret. Never add a client secret. The app can open without a client ID, but connecting or synchronizing an account will return a configuration error until it is rebuilt with one. `.env.example` documents the variable; the app does not automatically load `.env` files.
+
+OAuth runs in the system browser using S256 PKCE, CSRF state, and a temporary `127.0.0.1` callback. Refresh tokens are stored in Windows Credential Manager or Linux Secret Service. Access tokens remain in Rust memory and are never sent to React.
+
+## Development
+
+Prerequisites are Node.js, npm, Rust, and the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/) for the host platform. Linux also needs a running Secret Service provider such as GNOME Keyring or KeePassXC Secret Service integration.
+
+```bash
+npm install
+npm run tauri dev
+```
+
+Run all source-level quality checks with:
+
+```bash
+npm run check
+```
+
+## Packaging Commands
+
+```bash
+npm run build:linux
+npm run build:windows
+```
+
+`build:linux` produces AppImage and Debian bundles. `build:windows` cross-compiles an NSIS installer from Linux using `cargo-xwin`; it requires the additional LLVM, NSIS, Windows Rust target, and `cargo-xwin` prerequisites documented by Tauri. MSI creation requires a Windows host and is not included.
+
+## Architecture
+
+Rust owns OAuth, secrets, Google HTTP requests, synchronization, SQLite, offline mutations, reminders, and desktop lifecycle. React communicates through typed Tauri commands and never receives tokens. Outside Tauri, the frontend uses a deterministic in-memory demo adapter for interface development and tests.
+
+SQLite is stored in the platform application-data directory. Google sync tokens are persisted per account and resource. Invalid tokens trigger a controlled full resynchronization; mutations use client-generated IDs and ETag preconditions to avoid duplicate writes and detect conflicts.
+
+Closing the window hides the app to the tray. Explicitly choosing **Quit** ends background synchronization and reminders. Popup reminders use event overrides or Google calendar defaults and are deduplicated across restarts.
