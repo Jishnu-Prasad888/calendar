@@ -5,8 +5,8 @@ use crate::{
     AppState,
     error::{AppError, AppResult},
     model::{
-        Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, Preferences, SyncSummary,
-        TaskList, event_time,
+        Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, Preferences, SyncState,
+        SyncStatus, TaskList, event_time,
     },
 };
 
@@ -16,7 +16,7 @@ pub async fn bootstrap(state: State<'_, AppState>) -> AppResult<AppSnapshot> {
         accounts: state.repo.accounts().await?,
         calendars: state.repo.calendars().await?,
         preferences: state.repo.preferences().await?,
-        sync_state: state.repo.sync_states().await?,
+        sync_state: state.repo.sync_overview().await?,
     })
 }
 
@@ -58,8 +58,15 @@ pub async fn remove_account(account_id: String, state: State<'_, AppState>) -> A
 }
 
 #[tauri::command]
-pub async fn sync_now(state: State<'_, AppState>) -> AppResult<SyncSummary> {
-    state.sync.sync_all().await
+pub async fn sync_now(state: State<'_, AppState>) -> AppResult<SyncState> {
+    state.auth.ensure_configured()?;
+    let summary = state.sync.sync_all().await?;
+    let mut overview = state.repo.sync_overview().await?;
+    if !summary.errors.is_empty() && overview.status != SyncStatus::Error {
+        overview.status = SyncStatus::Error;
+        overview.message = Some(summary.errors.join("; "));
+    }
+    Ok(overview)
 }
 
 #[tauri::command]
@@ -263,6 +270,22 @@ fn apply_event_patch(raw: &mut Value, patch: &EventPatch) -> AppResult<Value> {
         let value = serde_json::to_value(recurrence)?;
         set(&mut changed, object, "recurrence", value);
     }
+    if let Some(privacy) = patch.privacy {
+        set(
+            &mut changed,
+            object,
+            "visibility",
+            serde_json::to_value(privacy)?,
+        );
+    }
+    if let Some(availability) = patch.availability {
+        set(
+            &mut changed,
+            object,
+            "transparency",
+            Value::String(availability.google_transparency().into()),
+        );
+    }
     if changed.is_empty() {
         return Err(AppError::Validation("event patch is empty".into()));
     }
@@ -286,20 +309,11 @@ fn set(changed: &mut Map<String, Value>, object: &mut Map<String, Value>, key: &
     changed.insert(key.to_owned(), value);
 }
 
-fn attendee_values(attendees: &[crate::model::Attendee]) -> Value {
+fn attendee_values(attendees: &[String]) -> Value {
     Value::Array(
         attendees
             .iter()
-            .map(|attendee| {
-                let mut value = serde_json::json!({"email": attendee.email});
-                if let Some(name) = &attendee.display_name {
-                    value["displayName"] = Value::String(name.clone());
-                }
-                if let Some(status) = &attendee.response_status {
-                    value["responseStatus"] = Value::String(status.clone());
-                }
-                value
-            })
+            .map(|email| serde_json::json!({"email": email}))
             .collect(),
     )
 }
@@ -317,11 +331,15 @@ mod tests {
         let patch = EventPatch {
             title: Some("New".into()),
             description: Some(None),
+            privacy: Some(crate::model::EventPrivacy::Private),
+            availability: Some(crate::model::EventAvailability::Free),
             ..Default::default()
         };
         let google_patch = apply_event_patch(&mut raw, &patch).unwrap();
         assert_eq!(raw["unknown"]["kept"], true);
         assert!(raw["description"].is_null());
+        assert_eq!(raw["visibility"], "private");
+        assert_eq!(raw["transparency"], "transparent");
         assert!(google_patch.get("unknown").is_none());
     }
 }

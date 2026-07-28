@@ -8,7 +8,6 @@ import type {
   EventInput,
   EventPatch,
   IpcClient,
-  PreferenceInput,
   Preferences,
   SyncState,
   TaskList,
@@ -83,6 +82,10 @@ export function createDemoStore(today = new Date()): DemoStore {
         weekStartsOn: 1,
         defaultView: 'month',
         autostart: false,
+        selectedCalendarIds: [],
+        showTasks: true,
+        syncIntervalMinutes: 15,
+        notificationsEnabled: true,
       },
       syncState: {
         status: 'idle',
@@ -308,16 +311,21 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
     },
     updateEvent: async (eventId, calendarId, patch) => {
       const event = findWritableEvent(store, eventId, calendarId);
+      const { description, location, ...changes } = patch;
       const attendees = patch.attendees?.map((email) => ({
         email,
         responseStatus:
           event.attendees.find((attendee) => attendee.email === email)
             ?.responseStatus ?? ('needsAction' as const),
       }));
-      Object.assign(event, patch, {
+      Object.assign(event, changes, {
         attendees: attendees ?? event.attendees,
         etag: `demo-${String(store.nextId++)}`,
       });
+      if (description === null) delete event.description;
+      else if (description !== undefined) event.description = description;
+      if (location === null) delete event.location;
+      else if (location !== undefined) event.location = location;
       return copyEvent(event);
     },
     deleteEvent: async (eventId, calendarId) => {
@@ -332,14 +340,13 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
       return copyEvent(event);
     },
     updatePreferences: async (input) => {
-      const preferences = { ...store.snapshot.preferences, ...input };
-      store.snapshot = { ...store.snapshot, preferences };
-      return { ...preferences };
+      store.snapshot = { ...store.snapshot, preferences: { ...input } };
+      return { ...input };
     },
   };
 }
 
-function createTauriClient(): IpcClient {
+export function createTauriClient(): IpcClient {
   return {
     bootstrap: () => invoke<AppSnapshot>('bootstrap'),
     getEvents: (rangeStart, rangeEnd) =>
@@ -361,7 +368,7 @@ function createTauriClient(): IpcClient {
         calendarId,
         response,
       }),
-    updatePreferences: (input: PreferenceInput) =>
+    updatePreferences: (input: Preferences) =>
       invoke<Preferences>('update_preferences', { input }),
   };
 }

@@ -212,8 +212,8 @@ export function App() {
       if (dialog?.event) {
         const patch: EventPatch = {
           title: input.title,
-          description: input.description,
-          location: input.location,
+          description: input.description ?? null,
+          location: input.location ?? null,
           start: input.start,
           end: input.end,
           allDay: input.allDay,
@@ -351,9 +351,10 @@ export function App() {
   const updatePreferences = (input: PreferenceInput) => {
     if (!snapshot) return;
     const previous = snapshot.preferences;
-    setSnapshot({ ...snapshot, preferences: { ...previous, ...input } });
+    const next = { ...previous, ...input };
+    setSnapshot({ ...snapshot, preferences: next });
     void ipc
-      .updatePreferences(input)
+      .updatePreferences(next)
       .then((preferences) => {
         setSnapshot((current) =>
           current ? { ...current, preferences } : current,

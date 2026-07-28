@@ -14,6 +14,10 @@ const preferences: Preferences = {
   weekStartsOn: 1,
   defaultView: 'month',
   autostart: false,
+  selectedCalendarIds: [],
+  showTasks: true,
+  syncIntervalMinutes: 15,
+  notificationsEnabled: true,
 };
 
 function AppearanceHarness({ value }: { value: Preferences }) {

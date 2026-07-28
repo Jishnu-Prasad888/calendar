@@ -28,6 +28,10 @@ export type Preferences = {
   weekStartsOn: 0 | 1 | 6;
   defaultView: CalendarView;
   autostart: boolean;
+  selectedCalendarIds: readonly string[];
+  showTasks: boolean;
+  syncIntervalMinutes: number;
+  notificationsEnabled: boolean;
 };
 
 export type SyncState = {
@@ -99,7 +103,12 @@ export type EventInput = {
   availability?: EventAvailability;
 };
 
-export type EventPatch = Partial<Omit<EventInput, 'calendarId'>>;
+export type EventPatch = Partial<
+  Omit<EventInput, 'calendarId' | 'description' | 'location'>
+> & {
+  description?: string | null;
+  location?: string | null;
+};
 
 export type Task = {
   id: string;
@@ -137,5 +146,5 @@ export type IpcClient = {
     calendarId: string,
     response: AttendeeResponse,
   ) => Promise<CalendarEvent>;
-  updatePreferences: (input: PreferenceInput) => Promise<Preferences>;
+  updatePreferences: (input: Preferences) => Promise<Preferences>;
 };

@@ -9,8 +9,13 @@ use sqlx::{
 
 use crate::{
     error::{AppError, AppResult},
-    model::{Account, Calendar, CalendarEvent, Preferences, SyncState, Task, TaskList},
+    model::{
+        Account, Calendar, CalendarEvent, DetailedSyncState, EventAvailability, EventPrivacy,
+        Preferences, SyncState, Task, TaskList, is_css_color,
+    },
 };
+
+const DEFAULT_CALENDAR_COLOR: &str = "#1a73e8";
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
@@ -38,6 +43,7 @@ struct CalendarRow {
     name: String,
     description: Option<String>,
     color: Option<String>,
+    background_color: Option<String>,
     access_role: String,
     primary_calendar: i64,
     selected: i64,
@@ -55,6 +61,8 @@ struct EventRow {
     pending: i64,
     raw_json: String,
     access_role: String,
+    calendar_color: Option<String>,
+    calendar_background_color: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -65,6 +73,7 @@ struct TaskRow {
     status: String,
     due: Option<String>,
     completed: Option<String>,
+    raw_json: String,
 }
 
 impl Repository {
@@ -103,9 +112,11 @@ impl Repository {
 
     pub async fn accounts(&self) -> AppResult<Vec<Account>> {
         Ok(
-            sqlx::query_as("SELECT id, email, name, picture_url FROM accounts ORDER BY email")
-                .fetch_all(&self.pool)
-                .await?,
+            sqlx::query_as(
+                "SELECT id,email,name AS display_name,picture_url AS avatar_url,TRUE AS connected FROM accounts ORDER BY email",
+            )
+            .fetch_all(&self.pool)
+            .await?,
         )
     }
 
@@ -117,8 +128,8 @@ impl Repository {
         )
         .bind(&account.id)
         .bind(&account.email)
-        .bind(&account.name)
-        .bind(&account.picture_url)
+        .bind(&account.display_name)
+        .bind(&account.avatar_url)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -136,22 +147,30 @@ impl Repository {
 
     pub async fn calendars(&self) -> AppResult<Vec<Calendar>> {
         let rows: Vec<CalendarRow> = sqlx::query_as(
-            "SELECT id,account_id,name,description,COALESCE(background_color,color) AS color,access_role,primary_calendar,selected FROM calendars WHERE deleted=0 ORDER BY primary_calendar DESC,name",
+            "SELECT id,account_id,name,description,color,background_color,access_role,primary_calendar,selected FROM calendars WHERE deleted=0 ORDER BY primary_calendar DESC,name",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|row| Calendar {
-                id: row.id,
-                account_id: row.account_id,
-                name: row.name,
-                description: row.description,
-                color: row.color,
-                read_only: row.access_role == "reader" || row.access_role == "freeBusyReader",
-                access_role: row.access_role,
-                primary: row.primary_calendar != 0,
-                selected: row.selected != 0,
+            .map(|row| {
+                let background_color = valid_color(row.background_color.as_deref());
+                let color = background_color
+                    .clone()
+                    .or_else(|| valid_color(row.color.as_deref()))
+                    .unwrap_or_else(|| DEFAULT_CALENDAR_COLOR.into());
+                Calendar {
+                    id: row.id,
+                    account_id: row.account_id,
+                    name: row.name,
+                    description: row.description,
+                    color,
+                    background_color,
+                    read_only: row.access_role == "reader" || row.access_role == "freeBusyReader",
+                    access_role: row.access_role,
+                    primary: row.primary_calendar != 0,
+                    visible: row.selected != 0,
+                }
             })
             .collect())
     }
@@ -210,7 +229,7 @@ impl Repository {
 
     pub async fn events(&self, start: &str, end: &str) -> AppResult<Vec<CalendarEvent>> {
         let rows: Vec<EventRow> = sqlx::query_as(
-            "SELECT e.id,e.calendar_id,e.title,e.start_time,e.end_time,e.all_day,e.etag,e.pending,e.raw_json,c.access_role FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.deleted=0 AND e.start_time < ? AND e.end_time > ? ORDER BY e.start_time",
+            "SELECT e.id,e.calendar_id,e.title,e.start_time,e.end_time,e.all_day,e.etag,e.pending,e.raw_json,c.access_role,c.color AS calendar_color,c.background_color AS calendar_background_color FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.deleted=0 AND e.start_time < ? AND e.end_time > ? ORDER BY e.start_time",
         ).bind(end).bind(start).fetch_all(&self.pool).await?;
         rows.into_iter().map(event_from_row).collect()
     }
@@ -318,7 +337,7 @@ impl Repository {
         event_id: &str,
     ) -> AppResult<CalendarEvent> {
         let row: EventRow = sqlx::query_as(
-            "SELECT e.id,e.calendar_id,e.title,e.start_time,e.end_time,e.all_day,e.etag,e.pending,e.raw_json,c.access_role FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.account_id=? AND e.calendar_id=? AND e.id=?",
+            "SELECT e.id,e.calendar_id,e.title,e.start_time,e.end_time,e.all_day,e.etag,e.pending,e.raw_json,c.access_role,c.color AS calendar_color,c.background_color AS calendar_background_color FROM events e JOIN calendars c ON c.account_id=e.account_id AND c.id=e.calendar_id WHERE e.account_id=? AND e.calendar_id=? AND e.id=?",
         ).bind(account_id).bind(calendar_id).bind(event_id).fetch_optional(&self.pool).await?
         .ok_or_else(|| AppError::NotFound(format!("event {event_id}")))?;
         event_from_row(row)
@@ -361,7 +380,7 @@ impl Repository {
         let mut result = Vec::new();
         for (account_id, id, title) in lists {
             let rows: Vec<TaskRow> = sqlx::query_as(
-                "SELECT id,title,notes,status,due,completed FROM tasks WHERE account_id=? AND task_list_id=? ORDER BY position",
+                "SELECT id,title,notes,status,due,completed,raw_json FROM tasks WHERE account_id=? AND task_list_id=? ORDER BY position",
             ).bind(&account_id).bind(&id).fetch_all(&self.pool).await?;
             result.push(TaskList {
                 id,
@@ -370,14 +389,25 @@ impl Repository {
                 read_only: true,
                 tasks: rows
                     .into_iter()
-                    .map(|r| Task {
-                        id: r.id,
-                        title: r.title,
-                        notes: r.notes,
-                        status: r.status,
-                        due: r.due,
-                        completed: r.completed,
-                        read_only: true,
+                    .map(|r| {
+                        let raw: Value = serde_json::from_str(&r.raw_json).unwrap_or_default();
+                        let updated_at = raw
+                            .get("updated")
+                            .and_then(Value::as_str)
+                            .or(r.completed.as_deref())
+                            .unwrap_or("1970-01-01T00:00:00Z")
+                            .to_owned();
+                        Task {
+                            id: r.id,
+                            title: r.title,
+                            notes: r.notes,
+                            completed: r.status == "completed" || r.completed.is_some(),
+                            completed_at: r.completed,
+                            status: r.status,
+                            due: r.due,
+                            updated_at,
+                            read_only: true,
+                        }
                     })
                     .collect(),
             });
@@ -404,10 +434,11 @@ impl Repository {
         status: &str,
         error: Option<&str>,
     ) -> AppResult<()> {
+        let last_sync_at = (status == "idle").then(|| Utc::now().to_rfc3339());
         sqlx::query(
             "INSERT INTO sync_state(account_id,resource_type,resource_id,sync_token,last_sync_at,status,error) VALUES(?,?,?,?,?,?,?) \
-             ON CONFLICT(account_id,resource_type,resource_id) DO UPDATE SET sync_token=excluded.sync_token,last_sync_at=excluded.last_sync_at,status=excluded.status,error=excluded.error",
-        ).bind(account_id).bind(kind).bind(resource_id).bind(token).bind(Utc::now().to_rfc3339()).bind(status).bind(error)
+             ON CONFLICT(account_id,resource_type,resource_id) DO UPDATE SET sync_token=excluded.sync_token,last_sync_at=COALESCE(excluded.last_sync_at,sync_state.last_sync_at),status=excluded.status,error=excluded.error",
+        ).bind(account_id).bind(kind).bind(resource_id).bind(token).bind(last_sync_at).bind(status).bind(error)
         .execute(&self.pool).await?;
         Ok(())
     }
@@ -423,10 +454,14 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn sync_states(&self) -> AppResult<Vec<SyncState>> {
+    async fn sync_states(&self) -> AppResult<Vec<DetailedSyncState>> {
         Ok(sqlx::query_as::<_, (String,String,String,Option<String>,String,Option<String>)>(
             "SELECT account_id,resource_type,resource_id,last_sync_at,status,error FROM sync_state ORDER BY account_id,resource_type,resource_id"
-        ).fetch_all(&self.pool).await?.into_iter().map(|r| SyncState { account_id:r.0,resource_type:r.1,resource_id:r.2,last_sync_at:r.3,status:r.4,error:r.5 }).collect())
+        ).fetch_all(&self.pool).await?.into_iter().map(|r| DetailedSyncState { account_id:r.0,resource_type:r.1,resource_id:r.2,last_sync_at:r.3,status:r.4,error:r.5 }).collect())
+    }
+
+    pub async fn sync_overview(&self) -> AppResult<SyncState> {
+        Ok(SyncState::from_details(&self.sync_states().await?))
     }
 
     pub async fn preferences(&self) -> AppResult<Preferences> {
@@ -546,10 +581,12 @@ fn event_from_row(row: EventRow) -> AppResult<CalendarEvent> {
         start: row.start_time,
         end: row.end_time,
         all_day: row.all_day != 0,
-        color: raw
-            .get("colorId")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        color: ["color", "backgroundColor", "colorId"]
+            .into_iter()
+            .find_map(|key| valid_color(raw.get(key).and_then(Value::as_str)))
+            .or_else(|| valid_color(row.calendar_background_color.as_deref()))
+            .or_else(|| valid_color(row.calendar_color.as_deref()))
+            .or_else(|| Some(DEFAULT_CALENDAR_COLOR.into())),
         status: raw
             .get("status")
             .and_then(Value::as_str)
@@ -571,9 +608,26 @@ fn event_from_row(row: EventRow) -> AppResult<CalendarEvent> {
                     .collect()
             })
             .unwrap_or_default(),
+        privacy: match raw.get("visibility").and_then(Value::as_str) {
+            Some("public") => EventPrivacy::Public,
+            Some("private") => EventPrivacy::Private,
+            _ => EventPrivacy::Default,
+        },
+        availability: if raw.get("transparency").and_then(Value::as_str) == Some("transparent") {
+            EventAvailability::Free
+        } else {
+            EventAvailability::Busy
+        },
         etag: row.etag,
         pending: row.pending != 0,
     })
+}
+
+fn valid_color(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| is_css_color(value))
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -586,22 +640,44 @@ mod tests {
         let account = Account {
             id: "sub".into(),
             email: "test@example.com".into(),
-            name: "Test".into(),
-            picture_url: None,
+            display_name: "Test".into(),
+            avatar_url: None,
+            connected: true,
         };
         repo.upsert_account(&account).await.unwrap();
-        repo.upsert_calendar("sub", &serde_json::json!({"id":"primary","summary":"Calendar","primary":true,"accessRole":"owner"})).await.unwrap();
+        repo.upsert_calendar("sub", &serde_json::json!({"id":"primary","summary":"Calendar","primary":true,"accessRole":"owner","backgroundColor":"#123456","colorId":"11"})).await.unwrap();
         repo.upsert_event("sub", "primary", &serde_json::json!({
-            "id":"event1","summary":"Meeting","start":{"dateTime":"2026-07-29T09:00:00Z"},"end":{"dateTime":"2026-07-29T10:00:00Z"},"status":"confirmed"
+            "id":"event1","summary":"Meeting","colorId":"10","visibility":"private","transparency":"transparent","start":{"dateTime":"2026-07-29T09:00:00Z"},"end":{"dateTime":"2026-07-29T10:00:00Z"},"status":"confirmed"
         }), false).await.unwrap();
         assert_eq!(repo.accounts().await.unwrap().len(), 1);
-        assert_eq!(repo.calendars().await.unwrap().len(), 1);
+        let calendars = repo.calendars().await.unwrap();
+        assert_eq!(calendars[0].color, "#123456");
+        assert_eq!(calendars[0].background_color.as_deref(), Some("#123456"));
+        assert!(calendars[0].visible);
+        let events = repo
+            .events("2026-07-29T00:00:00Z", "2026-07-30T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(events[0].color.as_deref(), Some("#123456"));
+        assert_eq!(events[0].privacy, EventPrivacy::Private);
+        assert_eq!(events[0].availability, EventAvailability::Free);
+        repo.replace_task_lists(
+            "sub",
+            &[(
+                serde_json::json!({"id":"list","title":"Tasks","updated":"2026-07-29T09:00:00Z"}),
+                vec![serde_json::json!({
+                    "id":"task","title":"Review","status":"completed","completed":"2026-07-29T10:00:00Z","updated":"2026-07-29T11:00:00Z"
+                })],
+            )],
+        )
+        .await
+        .unwrap();
+        let task_lists = repo.task_lists().await.unwrap();
+        assert!(task_lists[0].tasks[0].completed);
+        assert_eq!(task_lists[0].tasks[0].updated_at, "2026-07-29T11:00:00Z");
         assert_eq!(
-            repo.events("2026-07-29T00:00:00Z", "2026-07-30T00:00:00Z")
-                .await
-                .unwrap()
-                .len(),
-            1
+            task_lists[0].tasks[0].completed_at.as_deref(),
+            Some("2026-07-29T10:00:00Z")
         );
         repo.remove_account("sub").await.unwrap();
         assert!(repo.calendars().await.unwrap().is_empty());

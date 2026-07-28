@@ -25,7 +25,7 @@ const KEYRING_SERVICE: &str = "app.claycalendar.desktop.google-oauth";
 
 #[derive(Clone)]
 pub struct AuthService {
-    client_id: String,
+    client_id: Option<String>,
     http: Client,
     access_tokens: std::sync::Arc<Mutex<HashMap<String, AccessToken>>>,
 }
@@ -76,20 +76,16 @@ impl AuthService {
         let client_id = option_env!("GOOGLE_CLIENT_ID")
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                AppError::Configuration(
-                    "GOOGLE_CLIENT_ID was not set when the Rust backend was compiled; set it and rebuild"
-                        .into(),
-                )
-            })?;
+            .map(str::to_owned);
         Ok(Self {
-            client_id: client_id.to_owned(),
+            client_id,
             http: Client::builder().timeout(Duration::from_secs(30)).build()?,
             access_tokens: Default::default(),
         })
     }
 
     pub async fn authorize<R: Runtime>(&self, app: &AppHandle<R>) -> AppResult<Account> {
+        let client_id = self.client_id()?;
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let port = listener.local_addr()?.port();
         let redirect_uri = format!("http://127.0.0.1:{port}/oauth/callback");
@@ -98,7 +94,7 @@ impl AuthService {
             .map_err(|error| AppError::Internal(format!("invalid OAuth URL: {error}")))?;
         auth_url
             .query_pairs_mut()
-            .append_pair("client_id", &self.client_id)
+            .append_pair("client_id", client_id)
             .append_pair("redirect_uri", &redirect_uri)
             .append_pair("response_type", "code")
             .append_pair("scope", SCOPES)
@@ -153,12 +149,14 @@ impl AuthService {
         Ok(Account {
             id: user.sub,
             email: user.email,
-            name: user.name,
-            picture_url: user.picture,
+            display_name: user.name,
+            avatar_url: user.picture,
+            connected: true,
         })
     }
 
     pub async fn access_token(&self, account_id: &str) -> AppResult<String> {
+        let client_id = self.client_id()?;
         {
             let cache = self.access_tokens.lock().await;
             if let Some(token) = cache.get(account_id)
@@ -172,7 +170,7 @@ impl AuthService {
             .http
             .post(TOKEN_URL)
             .form(&[
-                ("client_id", self.client_id.as_str()),
+                ("client_id", client_id),
                 ("refresh_token", refresh_token.as_str()),
                 ("grant_type", "refresh_token"),
             ])
@@ -214,11 +212,12 @@ impl AuthService {
         redirect_uri: &str,
         verifier: &str,
     ) -> AppResult<TokenResponse> {
+        let client_id = self.client_id()?;
         let response = self
             .http
             .post(TOKEN_URL)
             .form(&[
-                ("client_id", self.client_id.as_str()),
+                ("client_id", client_id),
                 ("code", code),
                 ("code_verifier", verifier),
                 ("redirect_uri", redirect_uri),
@@ -243,6 +242,20 @@ impl AuthService {
                 expires_at: Utc::now() + chrono::Duration::seconds(tokens.expires_in.max(60)),
             },
         );
+    }
+
+    pub fn ensure_configured(&self) -> AppResult<()> {
+        self.client_id()?;
+        Ok(())
+    }
+
+    fn client_id(&self) -> AppResult<&str> {
+        self.client_id.as_deref().ok_or_else(|| {
+            AppError::Configuration(
+                "GOOGLE_CLIENT_ID was not set when the Rust backend was compiled; set it and rebuild"
+                    .into(),
+            )
+        })
     }
 }
 
@@ -351,5 +364,19 @@ mod tests {
         assert_ne!(first.verifier, second.verifier);
         assert_ne!(first.state, second.state);
         assert!(first.verifier.len() >= 43);
+    }
+
+    #[test]
+    fn missing_build_credentials_do_not_prevent_service_creation() {
+        let service = AuthService {
+            client_id: None,
+            http: Client::new(),
+            access_tokens: Default::default(),
+        };
+        assert!(matches!(
+            service.ensure_configured(),
+            Err(AppError::Configuration(_))
+        ));
+        assert!(AuthService::from_build_config().is_ok());
     }
 }
