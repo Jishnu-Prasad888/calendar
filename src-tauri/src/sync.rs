@@ -242,6 +242,7 @@ impl SyncEngine {
                 .map_err(internal_api_error)?;
             url.query_pairs_mut()
                 .append_pair("maxResults", "2500")
+                .append_pair("singleEvents", "true")
                 .append_pair("showDeleted", "true");
             if let Some(token) = sync_token {
                 url.query_pairs_mut().append_pair("syncToken", token);

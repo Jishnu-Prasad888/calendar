@@ -118,7 +118,14 @@ impl GoogleClient {
             if let Some(etag) = etag {
                 request = request.header(reqwest::header::IF_MATCH, etag);
             }
-            let response = request.send().await.map_err(network_error)?;
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(_error) if attempt < 3 => {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    continue;
+                }
+                Err(error) => return Err(network_error(error)),
+            };
             let status = response.status();
             if status.is_success() {
                 if status == StatusCode::NO_CONTENT {
@@ -211,7 +218,8 @@ mod tests {
 
     #[test]
     fn escapes_resource_ids_in_urls() {
-        let url = GoogleClient::calendar_url(&["calendars", "name@example.com", "events"]).unwrap();
-        assert!(url.as_str().contains("name@example.com"));
+        let url = GoogleClient::calendar_url(&["calendars", "team/calendar@example.com", "events"])
+            .unwrap();
+        assert!(url.as_str().contains("team%2Fcalendar@example.com"));
     }
 }
