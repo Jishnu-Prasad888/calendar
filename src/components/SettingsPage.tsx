@@ -177,9 +177,7 @@ export function SettingsPage({
           <label className="setting-row">
             <span>
               <strong>Launch at startup</strong>
-              <small>
-                Preference display for desktop autostart integration.
-              </small>
+              <small>Start Clay Calendar quietly in the system tray.</small>
             </span>
             <input
               className="switch"
