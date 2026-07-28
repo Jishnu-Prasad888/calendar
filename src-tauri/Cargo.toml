@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+csscolorparser = "0.8"
 keyring = { version = "3", features = ["sync-secret-service", "windows-native"] }
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

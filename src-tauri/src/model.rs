@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -6,8 +6,10 @@ use serde_json::Value;
 pub struct Account {
     pub id: String,
     pub email: String,
-    pub name: String,
-    pub picture_url: Option<String>,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    pub connected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,11 +18,14 @@ pub struct Calendar {
     pub id: String,
     pub account_id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub color: Option<String>,
+    pub color: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
     pub access_role: String,
     pub primary: bool,
-    pub selected: bool,
+    pub visible: bool,
     pub read_only: bool,
 }
 
@@ -28,13 +33,13 @@ pub struct Calendar {
 #[serde(rename_all = "camelCase")]
 pub struct Attendee {
     pub email: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    #[serde(default)]
-    pub response_status: Option<String>,
+    #[serde(default = "needs_action")]
+    pub response_status: String,
     #[serde(default)]
     pub organizer: bool,
-    #[serde(default)]
+    #[serde(default, rename = "self")]
     pub self_attendee: bool,
 }
 
@@ -51,19 +56,51 @@ pub struct CalendarEvent {
     pub id: String,
     pub calendar_id: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
     pub start: String,
     pub end: String,
     pub all_day: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub status: String,
     pub read_only: bool,
     pub attendees: Vec<Attendee>,
     pub reminders: Vec<Reminder>,
     pub recurrence: Vec<String>,
+    pub privacy: EventPrivacy,
+    pub availability: EventAvailability,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
     pub pending: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EventPrivacy {
+    #[default]
+    Default,
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EventAvailability {
+    #[default]
+    Busy,
+    Free,
+}
+
+impl EventAvailability {
+    pub fn google_transparency(self) -> &'static str {
+        match self {
+            Self::Busy => "opaque",
+            Self::Free => "transparent",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,11 +117,15 @@ pub struct EventInput {
     #[serde(default)]
     pub all_day: bool,
     #[serde(default)]
-    pub attendees: Vec<Attendee>,
+    pub attendees: Vec<String>,
     #[serde(default)]
     pub reminders: Vec<Reminder>,
     #[serde(default)]
     pub recurrence: Vec<String>,
+    #[serde(default)]
+    pub privacy: EventPrivacy,
+    #[serde(default)]
+    pub availability: EventAvailability,
 }
 
 impl EventInput {
@@ -104,18 +145,14 @@ impl EventInput {
             "start": event_time(&self.start, self.all_day),
             "end": event_time(&self.end, self.all_day),
             "recurrence": self.recurrence,
+            "visibility": self.privacy,
+            "transparency": self.availability.google_transparency(),
         });
         if !self.attendees.is_empty() {
             event["attendees"] = Value::Array(
                 self.attendees
                     .iter()
-                    .map(|attendee| {
-                        let mut value = serde_json::json!({"email": attendee.email});
-                        if let Some(name) = &attendee.display_name {
-                            value["displayName"] = Value::String(name.clone());
-                        }
-                        value
-                    })
+                    .map(|email| serde_json::json!({"email": email}))
                     .collect(),
             );
         }
@@ -131,14 +168,18 @@ impl EventInput {
 #[serde(rename_all = "camelCase")]
 pub struct EventPatch {
     pub title: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable")]
     pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable")]
     pub location: Option<Option<String>>,
     pub start: Option<String>,
     pub end: Option<String>,
     pub all_day: Option<bool>,
-    pub attendees: Option<Vec<Attendee>>,
+    pub attendees: Option<Vec<String>>,
     pub reminders: Option<Vec<Reminder>>,
     pub recurrence: Option<Vec<String>>,
+    pub privacy: Option<EventPrivacy>,
+    pub availability: Option<EventAvailability>,
 }
 
 impl EventPatch {
@@ -165,10 +206,15 @@ impl EventPatch {
 pub struct Task {
     pub id: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub due: Option<String>,
-    pub completed: Option<String>,
+    pub completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    pub updated_at: String,
     pub read_only: bool,
 }
 
@@ -185,15 +231,48 @@ pub struct TaskList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Preferences {
+    pub theme: ThemeMode,
+    pub surface_color: String,
+    pub accent_color: String,
+    pub week_starts_on: u8,
+    pub default_view: CalendarView,
+    pub autostart: bool,
     pub selected_calendar_ids: Vec<String>,
     pub show_tasks: bool,
     pub sync_interval_minutes: u32,
     pub notifications_enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CalendarView {
+    #[default]
+    Month,
+    Week,
+    Day,
+    Year,
+    Schedule,
+    MultiDay,
+}
+
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            theme: ThemeMode::System,
+            surface_color: "#eef2f8".into(),
+            accent_color: "#1a73e8".into(),
+            week_starts_on: 1,
+            default_view: CalendarView::Month,
+            autostart: false,
             selected_calendar_ids: Vec::new(),
             show_tasks: true,
             sync_interval_minutes: 15,
@@ -204,6 +283,12 @@ impl Default for Preferences {
 
 impl Preferences {
     pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.week_starts_on, 0 | 1 | 6) {
+            return Err("weekStartsOn must be 0, 1, or 6".into());
+        }
+        if !is_css_color(&self.surface_color) || !is_css_color(&self.accent_color) {
+            return Err("surfaceColor and accentColor must be valid CSS colors".into());
+        }
         if !(5..=1440).contains(&self.sync_interval_minutes) {
             return Err("syncIntervalMinutes must be between 5 and 1440".into());
         }
@@ -211,15 +296,71 @@ impl Preferences {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncState {
+#[derive(Debug, Clone)]
+pub struct DetailedSyncState {
+    #[expect(dead_code, reason = "retained as the internal sync record identity")]
     pub account_id: String,
+    #[expect(dead_code, reason = "retained as the internal sync record identity")]
     pub resource_type: String,
+    #[expect(dead_code, reason = "retained as the internal sync record identity")]
     pub resource_id: String,
     pub last_sync_at: Option<String>,
     pub status: String,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncState {
+    pub status: SyncStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_synced_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncStatus {
+    #[default]
+    Idle,
+    Syncing,
+    Offline,
+    Error,
+}
+
+impl SyncState {
+    pub fn from_details(details: &[DetailedSyncState]) -> Self {
+        let status = if details.iter().any(|state| state.status == "syncing") {
+            SyncStatus::Syncing
+        } else if details.iter().any(|state| state.status == "error") {
+            SyncStatus::Error
+        } else if details.iter().any(|state| state.status == "offline") {
+            SyncStatus::Offline
+        } else {
+            SyncStatus::Idle
+        };
+        let last_synced_at = details
+            .iter()
+            .filter_map(|state| {
+                state
+                    .last_sync_at
+                    .as_ref()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|parsed| (parsed, state.last_sync_at.clone()))
+            })
+            .max_by_key(|(parsed, _)| *parsed)
+            .and_then(|(_, value)| value);
+        let errors: Vec<_> = details
+            .iter()
+            .filter_map(|state| state.error.as_deref())
+            .collect();
+        Self {
+            status,
+            last_synced_at,
+            message: (!errors.is_empty()).then(|| errors.join("; ")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,7 +369,7 @@ pub struct AppSnapshot {
     pub accounts: Vec<Account>,
     pub calendars: Vec<Calendar>,
     pub preferences: Preferences,
-    pub sync_state: Vec<SyncState>,
+    pub sync_state: SyncState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -267,6 +408,25 @@ pub fn event_time(value: &str, all_day: bool) -> Value {
     }
 }
 
+pub fn is_css_color(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && !value.chars().all(|character| character.is_ascii_digit())
+        && csscolorparser::parse(value).is_ok()
+}
+
+fn needs_action() -> String {
+    "needsAction".into()
+}
+
+fn deserialize_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +444,8 @@ mod tests {
             attendees: vec![],
             reminders: vec![],
             recurrence: vec![],
+            privacy: EventPrivacy::Default,
+            availability: EventAvailability::Busy,
         };
         assert!(valid.validate().is_ok());
         assert!(
@@ -305,6 +467,131 @@ mod tests {
             }
             .validate()
             .is_err()
+        );
+    }
+
+    #[test]
+    fn frontend_contract_serializes_expected_shapes() {
+        let account = serde_json::to_value(Account {
+            id: "sub".into(),
+            email: "person@example.com".into(),
+            display_name: "Person".into(),
+            avatar_url: None,
+            connected: true,
+        })
+        .unwrap();
+        assert_eq!(
+            account,
+            serde_json::json!({
+                "id": "sub", "email": "person@example.com", "displayName": "Person", "connected": true
+            })
+        );
+
+        let calendar = serde_json::to_value(Calendar {
+            id: "primary".into(),
+            account_id: "sub".into(),
+            name: "Calendar".into(),
+            description: None,
+            color: "#123456".into(),
+            background_color: Some("#123456".into()),
+            access_role: "owner".into(),
+            primary: true,
+            visible: true,
+            read_only: false,
+        })
+        .unwrap();
+        assert_eq!(calendar["color"], "#123456");
+        assert_eq!(calendar["backgroundColor"], "#123456");
+        assert_eq!(calendar["visible"], true);
+        assert!(calendar.get("selected").is_none());
+
+        let attendee: Attendee = serde_json::from_value(serde_json::json!({
+            "email": "person@example.com", "self": true, "organizer": true
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(attendee).unwrap(),
+            serde_json::json!({
+                "email": "person@example.com", "responseStatus": "needsAction", "organizer": true, "self": true
+            })
+        );
+
+        let preferences: Preferences = serde_json::from_value(serde_json::json!({
+            "syncIntervalMinutes": 30
+        }))
+        .unwrap();
+        let preferences = serde_json::to_value(preferences).unwrap();
+        assert_eq!(preferences["theme"], "system");
+        assert_eq!(preferences["surfaceColor"], "#eef2f8");
+        assert_eq!(preferences["defaultView"], "month");
+        assert_eq!(preferences["syncIntervalMinutes"], 30);
+
+        let task = serde_json::to_value(Task {
+            id: "task".into(),
+            title: "Review".into(),
+            notes: None,
+            status: "completed".into(),
+            due: None,
+            completed: true,
+            completed_at: Some("2026-07-29T10:00:00Z".into()),
+            updated_at: "2026-07-29T11:00:00Z".into(),
+            read_only: true,
+        })
+        .unwrap();
+        assert_eq!(task["completed"], true);
+        assert_eq!(task["updatedAt"], "2026-07-29T11:00:00Z");
+    }
+
+    #[test]
+    fn event_requests_use_email_arrays_and_distinguish_null_from_missing() {
+        let input: EventInput = serde_json::from_value(serde_json::json!({
+            "calendarId": "primary",
+            "title": "Planning",
+            "start": "2026-07-29T09:00:00Z",
+            "end": "2026-07-29T10:00:00Z",
+            "attendees": ["person@example.com"],
+            "privacy": "private",
+            "availability": "free"
+        }))
+        .unwrap();
+        let google = input.to_google_json("event");
+        assert_eq!(google["attendees"][0]["email"], "person@example.com");
+        assert_eq!(google["visibility"], "private");
+        assert_eq!(google["transparency"], "transparent");
+
+        let patch: EventPatch = serde_json::from_value(serde_json::json!({
+            "description": null
+        }))
+        .unwrap();
+        assert_eq!(patch.description, Some(None));
+        assert!(patch.location.is_none());
+    }
+
+    #[test]
+    fn sync_state_is_an_overview_object() {
+        let state = SyncState::from_details(&[
+            DetailedSyncState {
+                account_id: "sub".into(),
+                resource_type: "events".into(),
+                resource_id: "primary".into(),
+                last_sync_at: Some("2026-07-29T10:00:00Z".into()),
+                status: "idle".into(),
+                error: None,
+            },
+            DetailedSyncState {
+                account_id: "sub".into(),
+                resource_type: "tasks".into(),
+                resource_id: String::new(),
+                last_sync_at: Some("2026-07-29T11:00:00Z".into()),
+                status: "error".into(),
+                error: Some("Tasks unavailable".into()),
+            },
+        ]);
+        assert_eq!(
+            serde_json::to_value(state).unwrap(),
+            serde_json::json!({
+                "status": "error", "lastSyncedAt": "2026-07-29T11:00:00Z", "message": "Tasks unavailable"
+            })
         );
     }
 }

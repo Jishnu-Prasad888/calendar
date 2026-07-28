@@ -60,7 +60,7 @@ impl SyncEngine {
         for calendar in calendars.into_iter().filter(|calendar| {
             calendar.account_id == account_id
                 && if configured.is_empty() {
-                    calendar.selected
+                    calendar.visible
                 } else {
                     configured.contains(calendar.id.as_str())
                 }
