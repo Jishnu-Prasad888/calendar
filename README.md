@@ -2,7 +2,7 @@
 
 A claymorphic Google Calendar desktop client built with Tauri, Rust, React, and TypeScript. It targets Windows and Linux.
 
-##### Note :  THIS PROJECT IS MADE FOR PERSONAL USE BY ME EVERYTHING HERE IS AI GENERATED USE WITH CAUTION 
+### Note :  THIS PROJECT IS MADE FOR PERSONAL USE BY ME EVERYTHING HERE IS AI GENERATED USE WITH CAUTION 
 
 
 ## Features
