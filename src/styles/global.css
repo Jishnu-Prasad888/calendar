@@ -1109,6 +1109,42 @@ button:disabled {
   background: var(--accent);
   transform: translateX(17px);
 }
+.oauth-config {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.4fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 17px;
+  border-bottom: 1px solid var(--line);
+}
+.oauth-config label {
+  display: grid;
+  gap: 3px;
+}
+.oauth-config strong {
+  font-size: 0.74rem;
+}
+.oauth-config small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+.oauth-config input {
+  min-width: 0;
+  height: 37px;
+  padding: 0 11px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--panel-inset);
+  box-shadow: var(--shadow-inset);
+  font-family: ui-monospace, monospace;
+  font-size: 0.67rem;
+}
+.oauth-config input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
 .account-row {
   display: grid;
   grid-template-columns: auto minmax(180px, 1fr) auto auto;

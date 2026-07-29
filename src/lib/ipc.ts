@@ -76,6 +76,7 @@ export function createDemoStore(today = new Date()): DemoStore {
         },
       ],
       preferences: {
+        googleClientId: 'demo.apps.googleusercontent.com',
         theme: 'system',
         surfaceColor: '#eef2f8',
         accentColor: '#1a73e8',

@@ -226,6 +226,7 @@ pub async fn update_preferences(
     } else {
         state.repo.set_preferences(&input).await?;
     }
+    state.auth.set_client_id(&input.google_client_id).await?;
     Ok(input)
 }
 

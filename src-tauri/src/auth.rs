@@ -1,4 +1,8 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
@@ -25,9 +29,9 @@ const KEYRING_SERVICE: &str = "app.claycalendar.desktop.google-oauth";
 
 #[derive(Clone)]
 pub struct AuthService {
-    client_id: Option<String>,
+    client_id: Arc<RwLock<Option<String>>>,
     http: Client,
-    access_tokens: std::sync::Arc<Mutex<HashMap<String, AccessToken>>>,
+    access_tokens: Arc<Mutex<HashMap<String, AccessToken>>>,
 }
 
 #[derive(Clone)]
@@ -72,13 +76,9 @@ impl PkceChallenge {
 }
 
 impl AuthService {
-    pub fn from_build_config() -> AppResult<Self> {
-        let client_id = option_env!("GOOGLE_CLIENT_ID")
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
+    pub fn new(client_id: &str) -> AppResult<Self> {
         Ok(Self {
-            client_id,
+            client_id: Arc::new(RwLock::new(normalize_client_id(client_id))),
             http: Client::builder().timeout(Duration::from_secs(30)).build()?,
             access_tokens: Default::default(),
         })
@@ -94,7 +94,7 @@ impl AuthService {
             .map_err(|error| AppError::Internal(format!("invalid OAuth URL: {error}")))?;
         auth_url
             .query_pairs_mut()
-            .append_pair("client_id", client_id)
+            .append_pair("client_id", &client_id)
             .append_pair("redirect_uri", &redirect_uri)
             .append_pair("response_type", "code")
             .append_pair("scope", SCOPES)
@@ -170,7 +170,7 @@ impl AuthService {
             .http
             .post(TOKEN_URL)
             .form(&[
-                ("client_id", client_id),
+                ("client_id", client_id.as_str()),
                 ("refresh_token", refresh_token.as_str()),
                 ("grant_type", "refresh_token"),
             ])
@@ -217,7 +217,7 @@ impl AuthService {
             .http
             .post(TOKEN_URL)
             .form(&[
-                ("client_id", client_id),
+                ("client_id", client_id.as_str()),
                 ("code", code),
                 ("code_verifier", verifier),
                 ("redirect_uri", redirect_uri),
@@ -249,14 +249,33 @@ impl AuthService {
         Ok(())
     }
 
-    fn client_id(&self) -> AppResult<&str> {
-        self.client_id.as_deref().ok_or_else(|| {
-            AppError::Configuration(
-                "GOOGLE_CLIENT_ID was not set when the Rust backend was compiled; set it and rebuild"
+    pub async fn set_client_id(&self, client_id: &str) -> AppResult<()> {
+        *self
+            .client_id
+            .write()
+            .map_err(|_| AppError::Internal("OAuth configuration lock was poisoned".into()))? =
+            normalize_client_id(client_id);
+        self.access_tokens.lock().await.clear();
+        Ok(())
+    }
+
+    fn client_id(&self) -> AppResult<String> {
+        self.client_id
+            .read()
+            .map_err(|_| AppError::Internal("OAuth configuration lock was poisoned".into()))?
+            .clone()
+            .ok_or_else(|| {
+                AppError::Configuration(
+                "Google OAuth client ID is not configured; add it in Settings > Google accounts"
                     .into(),
             )
-        })
+            })
     }
+}
+
+fn normalize_client_id(client_id: &str) -> Option<String> {
+    let client_id = client_id.trim();
+    (!client_id.is_empty()).then(|| client_id.to_owned())
 }
 
 struct OAuthCallback {
@@ -368,15 +387,25 @@ mod tests {
 
     #[test]
     fn missing_build_credentials_do_not_prevent_service_creation() {
-        let service = AuthService {
-            client_id: None,
-            http: Client::new(),
-            access_tokens: Default::default(),
-        };
+        let service = AuthService::new("").unwrap();
         assert!(matches!(
             service.ensure_configured(),
             Err(AppError::Configuration(_))
         ));
-        assert!(AuthService::from_build_config().is_ok());
+        assert!(AuthService::new("configured.apps.googleusercontent.com").is_ok());
+    }
+
+    #[tokio::test]
+    async fn client_id_can_be_configured_at_runtime() {
+        let service = AuthService::new("").unwrap();
+        service
+            .set_client_id(" runtime.apps.googleusercontent.com ")
+            .await
+            .unwrap();
+        assert!(service.ensure_configured().is_ok());
+        assert_eq!(
+            service.client_id().unwrap(),
+            "runtime.apps.googleusercontent.com"
+        );
     }
 }

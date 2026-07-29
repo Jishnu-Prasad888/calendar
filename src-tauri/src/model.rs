@@ -231,6 +231,7 @@ pub struct TaskList {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Preferences {
+    pub google_client_id: String,
     pub theme: ThemeMode,
     pub surface_color: String,
     pub accent_color: String,
@@ -267,6 +268,10 @@ pub enum CalendarView {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            google_client_id: option_env!("GOOGLE_CLIENT_ID")
+                .unwrap_or_default()
+                .trim()
+                .to_owned(),
             theme: ThemeMode::System,
             surface_color: "#eef2f8".into(),
             accent_color: "#1a73e8".into(),
@@ -283,6 +288,10 @@ impl Default for Preferences {
 
 impl Preferences {
     pub fn validate(&self) -> Result<(), String> {
+        let client_id = self.google_client_id.trim();
+        if !client_id.is_empty() && !client_id.ends_with(".apps.googleusercontent.com") {
+            return Err("googleClientId must be a Google OAuth client ID".into());
+        }
         if !matches!(self.week_starts_on, 0 | 1 | 6) {
             return Err("weekStartsOn must be 0, 1, or 6".into());
         }
@@ -462,7 +471,21 @@ mod tests {
     fn preferences_reject_too_frequent_sync() {
         assert!(
             Preferences {
+                google_client_id: String::new(),
                 sync_interval_minutes: 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn preferences_validate_google_client_ids() {
+        assert!(Preferences::default().validate().is_ok());
+        assert!(
+            Preferences {
+                google_client_id: "not-a-google-client".into(),
                 ..Default::default()
             }
             .validate()
@@ -517,7 +540,8 @@ mod tests {
         );
 
         let preferences: Preferences = serde_json::from_value(serde_json::json!({
-            "syncIntervalMinutes": 30
+            "syncIntervalMinutes": 30,
+            "googleClientId": "client.apps.googleusercontent.com"
         }))
         .unwrap();
         let preferences = serde_json::to_value(preferences).unwrap();
@@ -525,6 +549,10 @@ mod tests {
         assert_eq!(preferences["surfaceColor"], "#eef2f8");
         assert_eq!(preferences["defaultView"], "month");
         assert_eq!(preferences["syncIntervalMinutes"], 30);
+        assert_eq!(
+            preferences["googleClientId"],
+            "client.apps.googleusercontent.com"
+        );
 
         let task = serde_json::to_value(Task {
             id: "task".into(),

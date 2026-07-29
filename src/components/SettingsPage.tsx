@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Check,
   Cloud,
@@ -47,6 +48,11 @@ export function SettingsPage({
   onRemove,
   onSync,
 }: SettingsPageProps) {
+  const [googleClientId, setGoogleClientId] = useState(
+    preferences.googleClientId,
+  );
+  const normalizedClientId = googleClientId.trim();
+
   return (
     <main className="page-surface settings-page">
       <header className="page-heading">
@@ -204,6 +210,40 @@ export function SettingsPage({
               {syncState.status === 'syncing' ? 'Syncing…' : 'Sync now'}
             </button>
           </header>
+          <form
+            className="oauth-config"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setGoogleClientId(normalizedClientId);
+              onUpdate({ googleClientId: normalizedClientId });
+            }}
+          >
+            <label htmlFor="google-client-id">
+              <strong>Google OAuth client ID</strong>
+              <small>
+                Use a Desktop app client ID from Google Cloud. This identifier
+                is public; no client secret or API key is required.
+              </small>
+            </label>
+            <input
+              id="google-client-id"
+              aria-label="Google OAuth client ID"
+              value={googleClientId}
+              onChange={(event) => setGoogleClientId(event.target.value)}
+              placeholder="123456789.apps.googleusercontent.com"
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              className="soft-button"
+              disabled={
+                busy || normalizedClientId === preferences.googleClientId
+              }
+            >
+              Save configuration
+            </button>
+          </form>
           {accounts.length === 0 && (
             <div className="account-empty">
               <p>No Google account is connected.</p>
@@ -238,14 +278,16 @@ export function SettingsPage({
           <button
             className="connect-button"
             onClick={onConnect}
-            disabled={busy}
+            disabled={busy || !preferences.googleClientId}
           >
             <Plus size={18} />
             <span>
               <strong>Connect another Google account</strong>
               <small>
-                Authentication opens in your default browser{' '}
-                <ExternalLink size={11} />
+                {preferences.googleClientId
+                  ? 'Authentication opens in your default browser'
+                  : 'Save an OAuth client ID above first'}{' '}
+                {preferences.googleClientId && <ExternalLink size={11} />}
               </small>
             </span>
           </button>

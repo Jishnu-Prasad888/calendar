@@ -8,6 +8,7 @@ import {
 } from './useAppearance';
 
 const preferences: Preferences = {
+  googleClientId: '',
   theme: 'dark',
   surfaceColor: '#223344',
   accentColor: '#cc5500',

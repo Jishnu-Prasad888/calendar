@@ -353,11 +353,15 @@ export function App() {
     setBusy(true);
     void ipc
       .startGoogleAuth()
-      .then((account) => {
-        setSnapshot((current) =>
-          current
-            ? { ...current, accounts: [...current.accounts, account] }
-            : current,
+      .then(() => ipc.bootstrap())
+      .then((value) => {
+        setSnapshot(value);
+        setVisibleCalendarIds(
+          new Set(
+            value.calendars
+              .filter((calendar) => calendar.visible)
+              .map((calendar) => calendar.id),
+          ),
         );
       })
       .catch((reason: unknown) =>

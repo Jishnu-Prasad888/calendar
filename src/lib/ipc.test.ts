@@ -57,6 +57,7 @@ describe('demo IPC client', () => {
   it('uses camelCase Tauri arguments and sends complete preferences', async () => {
     const client = createTauriClient();
     const preferences: Preferences = {
+      googleClientId: 'client.apps.googleusercontent.com',
       theme: 'system',
       surfaceColor: '#eef2f8',
       accentColor: '#1a73e8',

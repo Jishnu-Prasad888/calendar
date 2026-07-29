@@ -52,7 +52,8 @@ pub fn run() {
             let repo = tauri::async_runtime::block_on(Repository::open(
                 &data_dir.join("calendar.sqlite3"),
             ))?;
-            let auth = AuthService::from_build_config()?;
+            let preferences = tauri::async_runtime::block_on(repo.preferences())?;
+            let auth = AuthService::new(&preferences.google_client_id)?;
             let google = GoogleClient::new(auth.clone())?;
             let sync = SyncEngine::new(repo.clone(), google);
             app.manage(AppState {
@@ -61,7 +62,6 @@ pub fn run() {
                 sync: sync.clone(),
                 preferences_lock: tokio::sync::Mutex::new(()),
             });
-            let preferences = tauri::async_runtime::block_on(repo.preferences())?;
             match app.autolaunch().is_enabled() {
                 Ok(enabled) if enabled != preferences.autostart => {
                     if let Err(error) = desktop::set_autostart(app.handle(), preferences.autostart)

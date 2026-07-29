@@ -22,6 +22,7 @@ export type CalendarSource = {
 };
 
 export type Preferences = {
+  googleClientId: string;
   theme: ThemeMode;
   surfaceColor: string;
   accentColor: string;
