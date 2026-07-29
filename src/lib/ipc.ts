@@ -8,6 +8,7 @@ import type {
   EventInput,
   EventPatch,
   IpcClient,
+  OAuthConfiguration,
   Preferences,
   SyncState,
   TaskList,
@@ -87,6 +88,10 @@ export function createDemoStore(today = new Date()): DemoStore {
         showTasks: true,
         syncIntervalMinutes: 15,
         notificationsEnabled: true,
+      },
+      oauthConfiguration: {
+        clientId: 'demo.apps.googleusercontent.com',
+        clientSecretConfigured: true,
       },
       syncState: {
         status: 'idle',
@@ -344,6 +349,23 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
       store.snapshot = { ...store.snapshot, preferences: { ...input } };
       return { ...input };
     },
+    updateGoogleOAuthConfiguration: async (clientId, clientSecret) => {
+      const configuration: OAuthConfiguration = {
+        clientId,
+        clientSecretConfigured:
+          Boolean(clientSecret) ||
+          store.snapshot.oauthConfiguration.clientSecretConfigured,
+      };
+      store.snapshot = {
+        ...store.snapshot,
+        preferences: {
+          ...store.snapshot.preferences,
+          googleClientId: clientId,
+        },
+        oauthConfiguration: configuration,
+      };
+      return configuration;
+    },
   };
 }
 
@@ -371,6 +393,11 @@ export function createTauriClient(): IpcClient {
       }),
     updatePreferences: (input: Preferences) =>
       invoke<Preferences>('update_preferences', { input }),
+    updateGoogleOAuthConfiguration: (clientId, clientSecret) =>
+      invoke<OAuthConfiguration>('update_google_oauth_configuration', {
+        clientId,
+        clientSecret,
+      }),
   };
 }
 

@@ -53,7 +53,12 @@ pub fn run() {
                 &data_dir.join("calendar.sqlite3"),
             ))?;
             let preferences = tauri::async_runtime::block_on(repo.preferences())?;
-            let auth = AuthService::new(&preferences.google_client_id)?;
+            let client_secret = tauri::async_runtime::block_on(AuthService::stored_client_secret())
+                .unwrap_or_else(|error| {
+                    eprintln!("could not load Google OAuth client secret: {error}");
+                    None
+                });
+            let auth = AuthService::new(&preferences.google_client_id, client_secret)?;
             let google = GoogleClient::new(auth.clone())?;
             let sync = SyncEngine::new(repo.clone(), google);
             app.manage(AppState {
@@ -103,6 +108,7 @@ pub fn run() {
             commands::delete_event,
             commands::respond_to_event,
             commands::update_preferences,
+            commands::update_google_oauth_configuration,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Clay Calendar");

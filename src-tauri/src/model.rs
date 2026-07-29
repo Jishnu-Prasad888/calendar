@@ -244,6 +244,13 @@ pub struct Preferences {
     pub notifications_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthConfiguration {
+    pub client_id: String,
+    pub client_secret_configured: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
@@ -378,6 +385,7 @@ pub struct AppSnapshot {
     pub accounts: Vec<Account>,
     pub calendars: Vec<Calendar>,
     pub preferences: Preferences,
+    pub oauth_configuration: OAuthConfiguration,
     pub sync_state: SyncState,
 }
 

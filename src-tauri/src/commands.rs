@@ -5,8 +5,8 @@ use crate::{
     AppState, desktop,
     error::{AppError, AppResult},
     model::{
-        Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, Preferences, SyncState,
-        SyncStatus, TaskList, event_time,
+        Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, OAuthConfiguration,
+        Preferences, SyncState, SyncStatus, TaskList, event_time,
     },
 };
 
@@ -16,6 +16,7 @@ pub async fn bootstrap(state: State<'_, AppState>) -> AppResult<AppSnapshot> {
         accounts: state.repo.accounts().await?,
         calendars: state.repo.calendars().await?,
         preferences: state.repo.preferences().await?,
+        oauth_configuration: state.auth.configuration()?,
         sync_state: state.repo.sync_overview().await?,
     })
 }
@@ -228,6 +229,32 @@ pub async fn update_preferences(
     }
     state.auth.set_client_id(&input.google_client_id).await?;
     Ok(input)
+}
+
+#[tauri::command]
+pub async fn update_google_oauth_configuration(
+    client_id: String,
+    client_secret: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<OAuthConfiguration> {
+    let _guard = state.preferences_lock.lock().await;
+    let mut preferences = state.repo.preferences().await?;
+    preferences.google_client_id = client_id.trim().to_owned();
+    preferences.validate().map_err(AppError::Validation)?;
+    if client_secret.is_none() && !state.auth.configuration()?.client_secret_configured {
+        return Err(AppError::Validation(
+            "Google OAuth client secret is required".into(),
+        ));
+    }
+    state.repo.set_preferences(&preferences).await?;
+    state
+        .auth
+        .set_client_id(&preferences.google_client_id)
+        .await?;
+    if let Some(client_secret) = client_secret {
+        state.auth.set_client_secret(&client_secret).await?;
+    }
+    state.auth.configuration()
 }
 
 async fn ensure_writable(state: &AppState, calendar_id: &str) -> AppResult<()> {

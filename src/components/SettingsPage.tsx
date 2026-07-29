@@ -19,6 +19,7 @@ import {
 import type {
   Account,
   CalendarView,
+  OAuthConfiguration,
   PreferenceInput,
   Preferences,
   SyncState,
@@ -29,8 +30,10 @@ type SettingsPageProps = {
   preferences: Preferences;
   accounts: readonly Account[];
   syncState: SyncState;
+  oauthConfiguration: OAuthConfiguration;
   busy: boolean;
   onUpdate: (input: PreferenceInput) => void;
+  onUpdateOAuth: (clientId: string, clientSecret?: string) => void;
   onConnect: () => void;
   onRemove: (accountId: string) => void;
   onSync: () => void;
@@ -69,15 +72,18 @@ export function SettingsPage({
   preferences,
   accounts,
   syncState,
+  oauthConfiguration,
   busy,
   onUpdate,
+  onUpdateOAuth,
   onConnect,
   onRemove,
   onSync,
 }: SettingsPageProps) {
   const [googleClientId, setGoogleClientId] = useState(
-    preferences.googleClientId,
+    oauthConfiguration.clientId,
   );
+  const [googleClientSecret, setGoogleClientSecret] = useState('');
   const [guideOpen, setGuideOpen] = useState(false);
   const normalizedClientId = googleClientId.trim();
 
@@ -252,15 +258,20 @@ export function SettingsPage({
             onSubmit={(event) => {
               event.preventDefault();
               setGoogleClientId(normalizedClientId);
-              onUpdate({ googleClientId: normalizedClientId });
+              onUpdateOAuth(
+                normalizedClientId,
+                googleClientSecret.trim() || undefined,
+              );
+              setGoogleClientSecret('');
             }}
           >
             <div className="oauth-config-copy">
               <label htmlFor="google-client-id">
                 <strong>Google OAuth client ID</strong>
                 <small>
-                  Use a Desktop app client ID from Google Cloud. This identifier
-                  is public; no client secret or API key is required.
+                  Enter the Desktop app client ID and secret from Google Cloud.
+                  The secret is stored in your operating system credential
+                  vault, not the app database.
                 </small>
               </label>
               <button
@@ -271,20 +282,38 @@ export function SettingsPage({
                 <BookOpen size={13} /> Open complete setup guide
               </button>
             </div>
-            <input
-              id="google-client-id"
-              aria-label="Google OAuth client ID"
-              value={googleClientId}
-              onChange={(event) => setGoogleClientId(event.target.value)}
-              placeholder="123456789.apps.googleusercontent.com"
-              spellCheck={false}
-              autoComplete="off"
-            />
+            <div className="oauth-config-fields">
+              <input
+                id="google-client-id"
+                aria-label="Google OAuth client ID"
+                value={googleClientId}
+                onChange={(event) => setGoogleClientId(event.target.value)}
+                placeholder="123456789.apps.googleusercontent.com"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <input
+                aria-label="Google OAuth client secret"
+                type="password"
+                value={googleClientSecret}
+                onChange={(event) => setGoogleClientSecret(event.target.value)}
+                placeholder={
+                  oauthConfiguration.clientSecretConfigured
+                    ? 'Stored securely - enter to replace'
+                    : 'Paste Google OAuth client secret'
+                }
+                spellCheck={false}
+                autoComplete="new-password"
+              />
+            </div>
             <button
               type="submit"
               className="soft-button"
               disabled={
-                busy || normalizedClientId === preferences.googleClientId
+                busy ||
+                !normalizedClientId ||
+                (!googleClientSecret.trim() &&
+                  normalizedClientId === oauthConfiguration.clientId)
               }
             >
               Save configuration
@@ -324,16 +353,24 @@ export function SettingsPage({
           <button
             className="connect-button"
             onClick={onConnect}
-            disabled={busy || !preferences.googleClientId}
+            disabled={
+              busy ||
+              !oauthConfiguration.clientId ||
+              !oauthConfiguration.clientSecretConfigured
+            }
           >
             <Plus size={18} />
             <span>
               <strong>Connect another Google account</strong>
               <small>
-                {preferences.googleClientId
+                {oauthConfiguration.clientId &&
+                oauthConfiguration.clientSecretConfigured
                   ? 'Authentication opens in your default browser'
-                  : 'Save an OAuth client ID above first'}{' '}
-                {preferences.googleClientId && <ExternalLink size={11} />}
+                  : 'Save the OAuth client ID and secret above first'}{' '}
+                {oauthConfiguration.clientId &&
+                  oauthConfiguration.clientSecretConfigured && (
+                    <ExternalLink size={11} />
+                  )}
               </small>
             </span>
           </button>
@@ -379,11 +416,11 @@ export function SettingsPage({
                   <strong>What this app actually needs</strong>
                   <p>
                     One Google Cloud project, two enabled APIs, an OAuth consent
-                    screen, and one Desktop app OAuth client ID.
+                    screen, and one Desktop app OAuth client credential.
                   </p>
                 </div>
                 <span>No API key</span>
-                <span>No client secret</span>
+                <span>Secret stored securely</span>
               </aside>
 
               <ol className="setup-steps">
@@ -455,8 +492,9 @@ export function SettingsPage({
                     <p>
                       In Clients, create an OAuth client with application type
                       <strong> Desktop app</strong>. Do not choose Web
-                      application and do not create or paste a client secret.
-                      The temporary localhost callback is handled automatically.
+                      application. Google provides a client ID and client
+                      secret; the temporary localhost callback is handled
+                      automatically.
                     </p>
                     <CloudLink href={cloudLinks.clients}>
                       Create OAuth client
@@ -465,12 +503,13 @@ export function SettingsPage({
                 </li>
                 <li>
                   <article>
-                    <h3>Save the client ID in Clay Calendar</h3>
+                    <h3>Save the client ID and secret in Clay Calendar</h3>
                     <p>
-                      Copy the value ending in
-                      <code> .apps.googleusercontent.com</code>, close this
-                      guide, paste it into Google OAuth client ID, and select
-                      Save configuration. You can then connect your account.
+                      Copy the client ID ending in
+                      <code> .apps.googleusercontent.com</code> and its client
+                      secret. Close this guide, paste both values above, and
+                      select Save configuration. You can then connect your
+                      account.
                     </p>
                   </article>
                 </li>
@@ -480,8 +519,9 @@ export function SettingsPage({
                     <p>
                       Windows uses Credential Manager automatically. Linux needs
                       a running Secret Service provider such as GNOME Keyring or
-                      KeePassXC with Secret Service enabled. Refresh tokens are
-                      stored there, never in the preferences database.
+                      KeePassXC with Secret Service enabled. The OAuth client
+                      secret and refresh tokens are stored there, never in the
+                      preferences database.
                     </p>
                   </article>
                 </li>

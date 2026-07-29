@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::{
     error::{AppError, AppResult},
-    model::Account,
+    model::{Account, OAuthConfiguration},
 };
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -26,10 +26,12 @@ const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks.readonly";
 const KEYRING_SERVICE: &str = "app.claycalendar.desktop.google-oauth";
+const CLIENT_SECRET_KEY: &str = "oauth-client-secret";
 
 #[derive(Clone)]
 pub struct AuthService {
     client_id: Arc<RwLock<Option<String>>>,
+    client_secret: Arc<RwLock<Option<String>>>,
     http: Client,
     access_tokens: Arc<Mutex<HashMap<String, AccessToken>>>,
 }
@@ -82,9 +84,10 @@ impl PkceChallenge {
 }
 
 impl AuthService {
-    pub fn new(client_id: &str) -> AppResult<Self> {
+    pub fn new(client_id: &str, client_secret: Option<String>) -> AppResult<Self> {
         Ok(Self {
             client_id: Arc::new(RwLock::new(normalize_client_id(client_id))),
+            client_secret: Arc::new(RwLock::new(client_secret)),
             http: Client::builder().timeout(Duration::from_secs(30)).build()?,
             access_tokens: Default::default(),
         })
@@ -92,6 +95,7 @@ impl AuthService {
 
     pub async fn authorize<R: Runtime>(&self, app: &AppHandle<R>) -> AppResult<Account> {
         let client_id = self.client_id()?;
+        let client_secret = self.client_secret()?;
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
         let port = listener.local_addr()?.port();
         let redirect_uri = format!("http://127.0.0.1:{port}/oauth/callback");
@@ -134,7 +138,13 @@ impl AuthService {
             AppError::Authentication("OAuth callback did not include a code".into())
         })?;
         let tokens = self
-            .exchange_code(&client_id, &code, &redirect_uri, &pkce.verifier)
+            .exchange_code(
+                &client_id,
+                &client_secret,
+                &code,
+                &redirect_uri,
+                &pkce.verifier,
+            )
             .await?;
         let user: UserInfo = self
             .http
@@ -163,6 +173,7 @@ impl AuthService {
 
     pub async fn access_token(&self, account_id: &str) -> AppResult<String> {
         let client_id = self.client_id()?;
+        let client_secret = self.client_secret()?;
         {
             let cache = self.access_tokens.lock().await;
             if let Some(token) = cache.get(account_id)
@@ -177,6 +188,7 @@ impl AuthService {
             .post(TOKEN_URL)
             .form(&[
                 ("client_id", client_id.as_str()),
+                ("client_secret", client_secret.as_str()),
                 ("refresh_token", refresh_token.as_str()),
                 ("grant_type", "refresh_token"),
             ])
@@ -218,6 +230,7 @@ impl AuthService {
     async fn exchange_code(
         &self,
         client_id: &str,
+        client_secret: &str,
         code: &str,
         redirect_uri: &str,
         verifier: &str,
@@ -227,6 +240,7 @@ impl AuthService {
             .post(TOKEN_URL)
             .form(&[
                 ("client_id", client_id),
+                ("client_secret", client_secret),
                 ("code", code),
                 ("code_verifier", verifier),
                 ("redirect_uri", redirect_uri),
@@ -258,7 +272,24 @@ impl AuthService {
 
     pub fn ensure_configured(&self) -> AppResult<()> {
         self.client_id()?;
+        self.client_secret()?;
         Ok(())
+    }
+
+    pub fn configuration(&self) -> AppResult<OAuthConfiguration> {
+        Ok(OAuthConfiguration {
+            client_id: self
+                .client_id
+                .read()
+                .map_err(|_| AppError::Internal("OAuth configuration lock was poisoned".into()))?
+                .clone()
+                .unwrap_or_default(),
+            client_secret_configured: self
+                .client_secret
+                .read()
+                .map_err(|_| AppError::Internal("OAuth configuration lock was poisoned".into()))?
+                .is_some(),
+        })
     }
 
     pub async fn set_client_id(&self, client_id: &str) -> AppResult<()> {
@@ -271,6 +302,27 @@ impl AuthService {
         Ok(())
     }
 
+    pub async fn set_client_secret(&self, client_secret: &str) -> AppResult<()> {
+        let client_secret = client_secret.trim();
+        if client_secret.is_empty() {
+            return Err(AppError::Validation(
+                "Google OAuth client secret cannot be empty".into(),
+            ));
+        }
+        store_keyring_value(CLIENT_SECRET_KEY, client_secret).await?;
+        *self
+            .client_secret
+            .write()
+            .map_err(|_| AppError::Internal("OAuth configuration lock was poisoned".into()))? =
+            Some(client_secret.to_owned());
+        self.access_tokens.lock().await.clear();
+        Ok(())
+    }
+
+    pub async fn stored_client_secret() -> AppResult<Option<String>> {
+        load_optional_keyring_value(CLIENT_SECRET_KEY).await
+    }
+
     fn client_id(&self) -> AppResult<String> {
         self.client_id
             .read()
@@ -281,6 +333,19 @@ impl AuthService {
                 "Google OAuth client ID is not configured; add it in Settings > Google accounts"
                     .into(),
             )
+            })
+    }
+
+    fn client_secret(&self) -> AppResult<String> {
+        self.client_secret
+            .read()
+            .map_err(|_| AppError::Internal("OAuth configuration lock was poisoned".into()))?
+            .clone()
+            .ok_or_else(|| {
+                AppError::Configuration(
+                    "Google OAuth client secret is not configured; add it in Settings > Google accounts"
+                        .into(),
+                )
             })
     }
 }
@@ -364,10 +429,14 @@ fn random_urlsafe(bytes: usize) -> String {
 }
 
 async fn store_refresh_token(account_id: &str, token: &str) -> AppResult<()> {
-    let account_id = account_id.to_owned();
-    let token = token.to_owned();
+    store_keyring_value(account_id, token).await
+}
+
+async fn store_keyring_value(key: &str, value: &str) -> AppResult<()> {
+    let key = key.to_owned();
+    let value = value.to_owned();
     tokio::task::spawn_blocking(move || {
-        keyring::Entry::new(KEYRING_SERVICE, &account_id)?.set_password(&token)
+        keyring::Entry::new(KEYRING_SERVICE, &key)?.set_password(&value)
     })
     .await
     .map_err(|error| AppError::Internal(format!("keyring task failed: {error}")))??;
@@ -378,6 +447,21 @@ async fn load_refresh_token(account_id: &str) -> AppResult<String> {
     let account_id = account_id.to_owned();
     tokio::task::spawn_blocking(move || {
         keyring::Entry::new(KEYRING_SERVICE, &account_id)?.get_password()
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("keyring task failed: {error}")))?
+    .map_err(AppError::from)
+}
+
+async fn load_optional_keyring_value(key: &str) -> AppResult<Option<String>> {
+    let key = key.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, &key)?;
+        match entry.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error),
+        }
     })
     .await
     .map_err(|error| AppError::Internal(format!("keyring task failed: {error}")))?
@@ -417,17 +501,17 @@ mod tests {
 
     #[test]
     fn missing_build_credentials_do_not_prevent_service_creation() {
-        let service = AuthService::new("").unwrap();
+        let service = AuthService::new("", None).unwrap();
         assert!(matches!(
             service.ensure_configured(),
             Err(AppError::Configuration(_))
         ));
-        assert!(AuthService::new("configured.apps.googleusercontent.com").is_ok());
+        assert!(AuthService::new("configured.apps.googleusercontent.com", None).is_ok());
     }
 
     #[tokio::test]
     async fn client_id_can_be_configured_at_runtime() {
-        let service = AuthService::new("").unwrap();
+        let service = AuthService::new("", Some("secret".into())).unwrap();
         service
             .set_client_id(" runtime.apps.googleusercontent.com ")
             .await

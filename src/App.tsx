@@ -349,6 +349,34 @@ export function App() {
       });
   };
 
+  const updateGoogleOAuthConfiguration = (
+    clientId: string,
+    clientSecret?: string,
+  ) => {
+    setBusy(true);
+    void ipc
+      .updateGoogleOAuthConfiguration(clientId, clientSecret)
+      .then((oauthConfiguration) => {
+        setSnapshot((current) =>
+          current
+            ? {
+                ...current,
+                preferences: {
+                  ...current.preferences,
+                  googleClientId: oauthConfiguration.clientId,
+                },
+                oauthConfiguration,
+              }
+            : current,
+        );
+        setNotice('Google OAuth configuration saved securely.');
+      })
+      .catch((reason: unknown) =>
+        setNotice(errorMessage(reason, 'Could not save OAuth configuration.')),
+      )
+      .finally(() => setBusy(false));
+  };
+
   const connectAccount = () => {
     setBusy(true);
     void ipc
@@ -508,8 +536,10 @@ export function App() {
             preferences={snapshot.preferences}
             accounts={snapshot.accounts}
             syncState={snapshot.syncState}
+            oauthConfiguration={snapshot.oauthConfiguration}
             busy={busy}
             onUpdate={updatePreferences}
+            onUpdateOAuth={updateGoogleOAuthConfiguration}
             onConnect={connectAccount}
             onRemove={removeAccount}
             onSync={syncNow}

@@ -26,7 +26,7 @@ Calendar creation/sharing, Meet creation, attachments, free/busy assistance, app
    - `https://www.googleapis.com/auth/calendar`
    - `https://www.googleapis.com/auth/tasks.readonly`
 5. Create an OAuth client with application type **Desktop app**.
-6. Open **Settings > Google accounts**, paste the client ID into **Google OAuth client ID**, and save it before connecting an account.
+6. Open **Settings > Google accounts**, paste the client ID and client secret, and save them before connecting an account.
 
 For packaged or preconfigured builds, the client ID can optionally be supplied as a build-time default:
 
@@ -35,7 +35,7 @@ export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
 npm run tauri dev
 ```
 
-The desktop client ID is public and is stored in the app's local preferences. Never add a client secret or API key; the Desktop OAuth PKCE flow does not use either. A value supplied through `GOOGLE_CLIENT_ID` is only the initial default and can be changed later in Settings without rebuilding. `.env.example` documents the optional variable; the app does not automatically load `.env` files.
+The desktop client ID is public and is stored in the app's local preferences. The client secret is stored in Windows Credential Manager or Linux Secret Service and is never returned to React after saving. No API key is needed. A value supplied through `GOOGLE_CLIENT_ID` is only the initial client-ID default and can be changed later in Settings without rebuilding. `.env.example` documents the optional variable; the app does not automatically load `.env` files.
 
 OAuth runs in the system browser using S256 PKCE, CSRF state, and a temporary `127.0.0.1` callback. Refresh tokens are stored in Windows Credential Manager or Linux Secret Service. Access tokens remain in Rust memory and are never sent to React.
 

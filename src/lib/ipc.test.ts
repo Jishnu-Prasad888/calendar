@@ -81,5 +81,17 @@ describe('demo IPC client', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('update_preferences', {
       input: preferences,
     });
+
+    await client.updateGoogleOAuthConfiguration(
+      'client.apps.googleusercontent.com',
+      'secret',
+    );
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'update_google_oauth_configuration',
+      {
+        clientId: 'client.apps.googleusercontent.com',
+        clientSecret: 'secret',
+      },
+    );
   });
 });

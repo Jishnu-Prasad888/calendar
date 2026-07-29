@@ -41,10 +41,16 @@ export type SyncState = {
   message?: string;
 };
 
+export type OAuthConfiguration = {
+  clientId: string;
+  clientSecretConfigured: boolean;
+};
+
 export type AppSnapshot = {
   accounts: readonly Account[];
   calendars: readonly CalendarSource[];
   preferences: Preferences;
+  oauthConfiguration: OAuthConfiguration;
   syncState: SyncState;
 };
 
@@ -148,4 +154,8 @@ export type IpcClient = {
     response: AttendeeResponse,
   ) => Promise<CalendarEvent>;
   updatePreferences: (input: Preferences) => Promise<Preferences>;
+  updateGoogleOAuthConfiguration: (
+    clientId: string,
+    clientSecret?: string,
+  ) => Promise<OAuthConfiguration>;
 };

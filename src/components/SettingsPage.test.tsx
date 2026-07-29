@@ -19,14 +19,19 @@ const preferences: Preferences = {
 
 describe('SettingsPage', () => {
   it('saves a Google OAuth client ID before account connection', () => {
-    const onUpdate = vi.fn();
+    const onUpdateOAuth = vi.fn();
     render(
       <SettingsPage
         preferences={preferences}
         accounts={[]}
         syncState={{ status: 'idle' }}
+        oauthConfiguration={{
+          clientId: '',
+          clientSecretConfigured: false,
+        }}
         busy={false}
-        onUpdate={onUpdate}
+        onUpdate={vi.fn()}
+        onUpdateOAuth={onUpdateOAuth}
         onConnect={vi.fn()}
         onRemove={vi.fn()}
         onSync={vi.fn()}
@@ -39,11 +44,16 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByLabelText('Google OAuth client ID'), {
       target: { value: '  client.apps.googleusercontent.com  ' },
     });
+    fireEvent.change(screen.getByLabelText('Google OAuth client secret'), {
+      target: { value: '  client-secret  ' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
 
-    expect(onUpdate).toHaveBeenCalledWith({
-      googleClientId: 'client.apps.googleusercontent.com',
-    });
+    expect(onUpdateOAuth).toHaveBeenCalledWith(
+      'client.apps.googleusercontent.com',
+      'client-secret',
+    );
+    expect(screen.getByLabelText('Google OAuth client secret')).toHaveValue('');
   });
 
   it('opens and closes the complete Google setup guide', () => {
@@ -52,8 +62,13 @@ describe('SettingsPage', () => {
         preferences={preferences}
         accounts={[]}
         syncState={{ status: 'idle' }}
+        oauthConfiguration={{
+          clientId: '',
+          clientSecretConfigured: false,
+        }}
         busy={false}
         onUpdate={vi.fn()}
+        onUpdateOAuth={vi.fn()}
         onConnect={vi.fn()}
         onRemove={vi.fn()}
         onSync={vi.fn()}
@@ -67,7 +82,7 @@ describe('SettingsPage', () => {
       screen.getByRole('dialog', { name: 'Complete setup guide' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Enable the required Google APIs')).toBeVisible();
-    expect(screen.getByText('No client secret')).toBeVisible();
+    expect(screen.getByText('Secret stored securely')).toBeVisible();
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

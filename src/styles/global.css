@@ -1146,6 +1146,10 @@ button:disabled {
 .oauth-config input:focus {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
+.oauth-config-fields {
+  display: grid;
+  gap: 8px;
+}
 .oauth-guide-link,
 .guide-link {
   display: inline-flex;
