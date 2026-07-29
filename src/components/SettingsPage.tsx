@@ -85,7 +85,22 @@ export function SettingsPage({
   );
   const [googleClientSecret, setGoogleClientSecret] = useState('');
   const [guideOpen, setGuideOpen] = useState(false);
+  const [syncInterval, setSyncInterval] = useState(
+    String(preferences.syncIntervalMinutes),
+  );
   const normalizedClientId = googleClientId.trim();
+
+  const saveSyncInterval = () => {
+    const minutes = Number(syncInterval);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+      setSyncInterval(String(preferences.syncIntervalMinutes));
+      return;
+    }
+    setSyncInterval(String(minutes));
+    if (minutes !== preferences.syncIntervalMinutes) {
+      onUpdate({ syncIntervalMinutes: minutes });
+    }
+  };
 
   useEffect(() => {
     if (!guideOpen) return;
@@ -236,6 +251,30 @@ export function SettingsPage({
                 onUpdate({ autostart: event.target.checked })
               }
             />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Polling interval</strong>
+              <small>
+                Continuously check Google for updates every 1 to 1440 minutes.
+              </small>
+            </span>
+            <span className="polling-interval-control">
+              <input
+                aria-label="Polling interval in minutes"
+                type="number"
+                min="1"
+                max="1440"
+                step="1"
+                value={syncInterval}
+                onChange={(event) => setSyncInterval(event.target.value)}
+                onBlur={saveSyncInterval}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                }}
+              />
+              <small>minutes</small>
+            </span>
           </label>
         </section>
 

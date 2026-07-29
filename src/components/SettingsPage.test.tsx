@@ -87,4 +87,31 @@ describe('SettingsPage', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('updates the polling interval in minutes', () => {
+    const onUpdate = vi.fn();
+    render(
+      <SettingsPage
+        preferences={preferences}
+        accounts={[]}
+        syncState={{ status: 'idle' }}
+        oauthConfiguration={{
+          clientId: '',
+          clientSecretConfigured: false,
+        }}
+        busy={false}
+        onUpdate={onUpdate}
+        onUpdateOAuth={vi.fn()}
+        onConnect={vi.fn()}
+        onRemove={vi.fn()}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText('Polling interval in minutes');
+    fireEvent.change(input, { target: { value: '5' } });
+    fireEvent.blur(input);
+
+    expect(onUpdate).toHaveBeenCalledWith({ syncIntervalMinutes: 5 });
+  });
 });

@@ -60,7 +60,7 @@ pub fn run() {
                 });
             let auth = AuthService::new(&preferences.google_client_id, client_secret)?;
             let google = GoogleClient::new(auth.clone())?;
-            let sync = SyncEngine::new(repo.clone(), google);
+            let sync = SyncEngine::new(repo.clone(), google, app.handle().clone());
             app.manage(AppState {
                 repo: repo.clone(),
                 auth,
@@ -81,14 +81,21 @@ pub fn run() {
             }
             reminder::spawn(app.handle().clone(), repo.clone());
             tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(Duration::from_secs(60));
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                ticker.tick().await;
+                let mut last_sync = tokio::time::Instant::now();
                 loop {
+                    ticker.tick().await;
                     let minutes = repo
                         .preferences()
                         .await
                         .map(|value| value.sync_interval_minutes)
                         .unwrap_or(15);
-                    tokio::time::sleep(Duration::from_secs(u64::from(minutes) * 60)).await;
-                    let _ = sync.sync_all().await;
+                    if last_sync.elapsed() >= Duration::from_secs(u64::from(minutes) * 60) {
+                        let _ = sync.sync_all().await;
+                        last_sync = tokio::time::Instant::now();
+                    }
                 }
             });
             if !desktop::is_background_launch() {

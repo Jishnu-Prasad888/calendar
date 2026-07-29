@@ -2,32 +2,62 @@ use std::collections::HashSet;
 
 use reqwest::Method;
 use serde_json::Value;
+use tauri::{AppHandle, Emitter};
 
 use crate::{
     db::{PendingMutation, Repository},
     error::{AppError, AppResult},
     google::{ApiError, GoogleClient},
-    model::{Calendar, SyncSummary},
+    model::{Calendar, SyncState, SyncStatus, SyncSummary},
 };
 
 #[derive(Clone)]
 pub struct SyncEngine {
     repo: Repository,
     google: GoogleClient,
+    app: AppHandle,
     lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SyncEngine {
-    pub fn new(repo: Repository, google: GoogleClient) -> Self {
+    pub fn new(repo: Repository, google: GoogleClient, app: AppHandle) -> Self {
         Self {
             repo,
             google,
+            app,
             lock: Default::default(),
         }
     }
 
     pub async fn sync_all(&self) -> AppResult<SyncSummary> {
         let _guard = self.lock.lock().await;
+        self.emit_state(SyncState {
+            status: SyncStatus::Syncing,
+            last_synced_at: None,
+            message: None,
+        });
+        let result = self.sync_all_inner().await;
+        let state = match &result {
+            Ok(_) => self
+                .repo
+                .sync_overview()
+                .await
+                .unwrap_or_else(|error| SyncState {
+                    status: SyncStatus::Error,
+                    last_synced_at: None,
+                    message: Some(error.to_string()),
+                }),
+            Err(error) => SyncState {
+                status: SyncStatus::Error,
+                last_synced_at: None,
+                message: Some(error.to_string()),
+            },
+        };
+        self.emit_state(state);
+        result
+    }
+
+    async fn sync_all_inner(&self) -> AppResult<SyncSummary> {
         let mut summary = SyncSummary::default();
         self.process_mutations(&mut summary).await?;
         for account in self.repo.accounts().await? {
@@ -43,6 +73,10 @@ impl SyncEngine {
             }
         }
         Ok(summary)
+    }
+
+    fn emit_state(&self, state: SyncState) {
+        let _ = self.app.emit("sync-state-changed", state);
     }
 
     async fn sync_account(&self, account_id: &str, summary: &mut SyncSummary) -> AppResult<()> {

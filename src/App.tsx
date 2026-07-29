@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { AlertCircle, CalendarRange, RefreshCw, X } from 'lucide-react';
 import type {
   AppSnapshot,
@@ -8,6 +9,7 @@ import type {
   EventInput,
   EventPatch,
   PreferenceInput,
+  SyncState,
   TaskList,
 } from './domain';
 import { AppSidebar, type AppPage } from './components/AppSidebar';
@@ -97,6 +99,61 @@ export function App() {
   );
 
   useAppearance(snapshot?.preferences);
+
+  const handleSyncState = useEffectEvent(async (syncState: SyncState) => {
+    setSnapshot((current) => (current ? { ...current, syncState } : current));
+    if (syncState.status === 'syncing') return;
+
+    try {
+      const previousCalendarIds = new Set(
+        snapshot?.calendars.map((calendar) => calendar.id) ?? [],
+      );
+      const value = await ipc.bootstrap();
+      setSnapshot(value);
+      setVisibleCalendarIds(
+        (current) =>
+          new Set(
+            value.calendars
+              .filter(
+                (calendar) =>
+                  current.has(calendar.id) ||
+                  (!previousCalendarIds.has(calendar.id) && calendar.visible),
+              )
+              .map((calendar) => calendar.id),
+          ),
+      );
+      if (eventRange.current) {
+        setEventsLoading(true);
+        setEvents(
+          await ipc.getEvents(eventRange.current.start, eventRange.current.end),
+        );
+      }
+      if (page === 'tasks') setTaskLists(await ipc.getTaskLists());
+      if (value.syncState.status === 'error') {
+        setNotice(value.syncState.message ?? 'Google synchronization failed.');
+      }
+    } catch (reason) {
+      setNotice(errorMessage(reason, 'Could not refresh synchronized data.'));
+    } finally {
+      setEventsLoading(false);
+    }
+  });
+
+  useEffect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    let active = true;
+    let stopListening: (() => void) | undefined;
+    void listen<SyncState>('sync-state-changed', (event) => {
+      void handleSyncState(event.payload);
+    }).then((unlisten) => {
+      if (active) stopListening = unlisten;
+      else unlisten();
+    });
+    return () => {
+      active = false;
+      stopListening?.();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;

@@ -305,8 +305,8 @@ impl Preferences {
         if !is_css_color(&self.surface_color) || !is_css_color(&self.accent_color) {
             return Err("surfaceColor and accentColor must be valid CSS colors".into());
         }
-        if !(5..=1440).contains(&self.sync_interval_minutes) {
-            return Err("syncIntervalMinutes must be between 5 and 1440".into());
+        if !(1..=1440).contains(&self.sync_interval_minutes) {
+            return Err("syncIntervalMinutes must be between 1 and 1440".into());
         }
         Ok(())
     }
@@ -476,11 +476,20 @@ mod tests {
     }
 
     #[test]
-    fn preferences_reject_too_frequent_sync() {
+    fn preferences_validate_sync_interval_bounds() {
         assert!(
             Preferences {
                 google_client_id: String::new(),
                 sync_interval_minutes: 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            Preferences {
+                google_client_id: String::new(),
+                sync_interval_minutes: 0,
                 ..Default::default()
             }
             .validate()
