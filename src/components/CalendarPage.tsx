@@ -233,8 +233,9 @@ export function CalendarPage({
         selectMirror
         editable
         dayMaxEvents={4}
-        slotMinTime="06:00:00"
-        slotMaxTime="22:00:00"
+        slotMinTime="00:00:00"
+        slotMaxTime="24:00:00"
+        scrollTime="00:00:00"
         slotDuration="00:30:00"
         allDaySlot
         events={visibleEvents.map((event) => ({
