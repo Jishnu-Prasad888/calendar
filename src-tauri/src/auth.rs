@@ -7,7 +7,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use rand::RngCore;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
@@ -45,6 +45,12 @@ struct TokenResponse {
     access_token: String,
     expires_in: i64,
     refresh_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OAuthErrorResponse {
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,7 +134,7 @@ impl AuthService {
             AppError::Authentication("OAuth callback did not include a code".into())
         })?;
         let tokens = self
-            .exchange_code(&code, &redirect_uri, &pkce.verifier)
+            .exchange_code(&client_id, &code, &redirect_uri, &pkce.verifier)
             .await?;
         let user: UserInfo = self
             .http
@@ -177,9 +183,12 @@ impl AuthService {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(AppError::Authentication(format!(
-                "could not refresh Google access (HTTP {})",
-                response.status()
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Authentication(oauth_error_message(
+                "could not refresh Google access",
+                status,
+                &body,
             )));
         }
         let tokens: TokenResponse = response.json().await?;
@@ -208,16 +217,16 @@ impl AuthService {
 
     async fn exchange_code(
         &self,
+        client_id: &str,
         code: &str,
         redirect_uri: &str,
         verifier: &str,
     ) -> AppResult<TokenResponse> {
-        let client_id = self.client_id()?;
         let response = self
             .http
             .post(TOKEN_URL)
             .form(&[
-                ("client_id", client_id.as_str()),
+                ("client_id", client_id),
                 ("code", code),
                 ("code_verifier", verifier),
                 ("redirect_uri", redirect_uri),
@@ -226,9 +235,12 @@ impl AuthService {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(AppError::Authentication(format!(
-                "OAuth code exchange failed (HTTP {})",
-                response.status()
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Authentication(oauth_error_message(
+                "OAuth code exchange failed",
+                status,
+                &body,
             )));
         }
         Ok(response.json().await?)
@@ -276,6 +288,24 @@ impl AuthService {
 fn normalize_client_id(client_id: &str) -> Option<String> {
     let client_id = client_id.trim();
     (!client_id.is_empty()).then(|| client_id.to_owned())
+}
+
+fn oauth_error_message(context: &str, status: StatusCode, body: &str) -> String {
+    let parsed = serde_json::from_str::<OAuthErrorResponse>(body).ok();
+    let code = parsed.as_ref().and_then(|error| error.error.as_deref());
+    let description = parsed
+        .as_ref()
+        .and_then(|error| error.error_description.as_deref());
+    let details = match (code, description) {
+        (Some(code), Some(description)) => format!("{code}: {description}"),
+        (Some(code), None) => code.to_owned(),
+        (None, Some(description)) => description.to_owned(),
+        (None, None) => status
+            .canonical_reason()
+            .unwrap_or("Google rejected the request")
+            .to_owned(),
+    };
+    format!("{context} (HTTP {status}): {details}")
 }
 
 struct OAuthCallback {
@@ -406,6 +436,19 @@ mod tests {
         assert_eq!(
             service.client_id().unwrap(),
             "runtime.apps.googleusercontent.com"
+        );
+    }
+
+    #[test]
+    fn oauth_errors_include_google_error_details() {
+        let message = oauth_error_message(
+            "OAuth code exchange failed",
+            StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_grant","error_description":"Bad Request"}"#,
+        );
+        assert_eq!(
+            message,
+            "OAuth code exchange failed (HTTP 400 Bad Request): invalid_grant: Bad Request"
         );
     }
 }
