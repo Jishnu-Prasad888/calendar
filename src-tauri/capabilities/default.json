@@ -8,7 +8,10 @@
     "notification:allow-is-permission-granted",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://accounts.google.com/*" }]
+      "allow": [
+        { "url": "https://accounts.google.com/*" },
+        { "url": "https://console.cloud.google.com/*" }
+      ]
     }
   ]
 }

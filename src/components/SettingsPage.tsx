@@ -1,15 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
+  BookOpen,
   Check,
   Cloud,
   ExternalLink,
+  KeyRound,
   Laptop,
   Moon,
   Palette,
   Plus,
   RotateCw,
+  ShieldCheck,
   Sun,
   Trash2,
+  X,
 } from 'lucide-react';
 import type {
   Account,
@@ -38,6 +43,28 @@ const themes: readonly { value: ThemeMode; label: string; icon: typeof Sun }[] =
     { value: 'system', label: 'System', icon: Laptop },
   ];
 
+const cloudLinks = {
+  project: 'https://console.cloud.google.com/projectcreate',
+  calendarApi:
+    'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
+  tasksApi:
+    'https://console.cloud.google.com/apis/library/tasks.googleapis.com',
+  auth: 'https://console.cloud.google.com/auth/overview',
+  clients: 'https://console.cloud.google.com/auth/clients',
+} as const;
+
+function CloudLink({ href, children }: { href: string; children: string }) {
+  return (
+    <button
+      type="button"
+      className="guide-link"
+      onClick={() => void openUrl(href)}
+    >
+      {children} <ExternalLink size={13} />
+    </button>
+  );
+}
+
 export function SettingsPage({
   preferences,
   accounts,
@@ -51,7 +78,17 @@ export function SettingsPage({
   const [googleClientId, setGoogleClientId] = useState(
     preferences.googleClientId,
   );
+  const [guideOpen, setGuideOpen] = useState(false);
   const normalizedClientId = googleClientId.trim();
+
+  useEffect(() => {
+    if (!guideOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setGuideOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [guideOpen]);
 
   return (
     <main className="page-surface settings-page">
@@ -218,13 +255,22 @@ export function SettingsPage({
               onUpdate({ googleClientId: normalizedClientId });
             }}
           >
-            <label htmlFor="google-client-id">
-              <strong>Google OAuth client ID</strong>
-              <small>
-                Use a Desktop app client ID from Google Cloud. This identifier
-                is public; no client secret or API key is required.
-              </small>
-            </label>
+            <div className="oauth-config-copy">
+              <label htmlFor="google-client-id">
+                <strong>Google OAuth client ID</strong>
+                <small>
+                  Use a Desktop app client ID from Google Cloud. This identifier
+                  is public; no client secret or API key is required.
+                </small>
+              </label>
+              <button
+                type="button"
+                className="oauth-guide-link"
+                onClick={() => setGuideOpen(true)}
+              >
+                <BookOpen size={13} /> Open complete setup guide
+              </button>
+            </div>
             <input
               id="google-client-id"
               aria-label="Google OAuth client ID"
@@ -293,6 +339,171 @@ export function SettingsPage({
           </button>
         </section>
       </div>
+      {guideOpen && (
+        <div
+          className="setup-guide-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setGuideOpen(false);
+          }}
+        >
+          <section
+            className="setup-guide-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="setup-guide-title"
+          >
+            <header>
+              <span className="setup-guide-icon">
+                <Cloud size={21} />
+              </span>
+              <div>
+                <small>Google integration</small>
+                <h2 id="setup-guide-title">Complete setup guide</h2>
+              </div>
+              <button
+                autoFocus
+                type="button"
+                className="icon-button"
+                aria-label="Close setup guide"
+                onClick={() => setGuideOpen(false)}
+              >
+                <X size={19} />
+              </button>
+            </header>
+
+            <div className="setup-guide-content">
+              <aside className="setup-requirements">
+                <ShieldCheck size={22} />
+                <div>
+                  <strong>What this app actually needs</strong>
+                  <p>
+                    One Google Cloud project, two enabled APIs, an OAuth consent
+                    screen, and one Desktop app OAuth client ID.
+                  </p>
+                </div>
+                <span>No API key</span>
+                <span>No client secret</span>
+              </aside>
+
+              <ol className="setup-steps">
+                <li>
+                  <article>
+                    <h3>Create or select a Google Cloud project</h3>
+                    <p>
+                      Use a dedicated project so its OAuth consent screen and
+                      API access are easy to manage. Keep that project selected
+                      while completing every step below.
+                    </p>
+                    <CloudLink href={cloudLinks.project}>
+                      Create a Cloud project
+                    </CloudLink>
+                  </article>
+                </li>
+                <li>
+                  <article>
+                    <h3>Enable the required Google APIs</h3>
+                    <p>
+                      Enable Calendar API for event and calendar sync. Enable
+                      Tasks API for the app's read-only Tasks page. No other
+                      Google API is required.
+                    </p>
+                    <div className="guide-link-row">
+                      <CloudLink href={cloudLinks.calendarApi}>
+                        Enable Calendar API
+                      </CloudLink>
+                      <CloudLink href={cloudLinks.tasksApi}>
+                        Enable Tasks API
+                      </CloudLink>
+                    </div>
+                  </article>
+                </li>
+                <li>
+                  <article>
+                    <h3>Configure Google Auth Platform</h3>
+                    <p>
+                      Add an app name and support email. For personal use,
+                      choose External audience and Testing status, then add each
+                      Google account you will connect as a test user.
+                    </p>
+                    <CloudLink href={cloudLinks.auth}>
+                      Open Google Auth Platform
+                    </CloudLink>
+                  </article>
+                </li>
+                <li>
+                  <article>
+                    <h3>Add the OAuth scopes</h3>
+                    <p>
+                      Add these scopes under Data Access. Calendar is
+                      read/write; Tasks remains read-only.
+                    </p>
+                    <div className="scope-list">
+                      <code>openid</code>
+                      <code>email</code>
+                      <code>profile</code>
+                      <code>https://www.googleapis.com/auth/calendar</code>
+                      <code>
+                        https://www.googleapis.com/auth/tasks.readonly
+                      </code>
+                    </div>
+                  </article>
+                </li>
+                <li>
+                  <article>
+                    <h3>Create a Desktop app OAuth client</h3>
+                    <p>
+                      In Clients, create an OAuth client with application type
+                      <strong> Desktop app</strong>. Do not choose Web
+                      application and do not create or paste a client secret.
+                      The temporary localhost callback is handled automatically.
+                    </p>
+                    <CloudLink href={cloudLinks.clients}>
+                      Create OAuth client
+                    </CloudLink>
+                  </article>
+                </li>
+                <li>
+                  <article>
+                    <h3>Save the client ID in Clay Calendar</h3>
+                    <p>
+                      Copy the value ending in
+                      <code> .apps.googleusercontent.com</code>, close this
+                      guide, paste it into Google OAuth client ID, and select
+                      Save configuration. You can then connect your account.
+                    </p>
+                  </article>
+                </li>
+                <li>
+                  <article>
+                    <h3>Confirm local credential storage</h3>
+                    <p>
+                      Windows uses Credential Manager automatically. Linux needs
+                      a running Secret Service provider such as GNOME Keyring or
+                      KeePassXC with Secret Service enabled. Refresh tokens are
+                      stored there, never in the preferences database.
+                    </p>
+                  </article>
+                </li>
+              </ol>
+
+              <section className="setup-troubleshooting">
+                <KeyRound size={19} />
+                <div>
+                  <h3>If Google blocks sign-in</h3>
+                  <p>
+                    Confirm the account is listed as a test user, the OAuth
+                    client type is Desktop app, both APIs belong to the same
+                    selected project, and all five scopes are configured. A
+                    Testing app may require reconnection after its refresh token
+                    expires.
+                  </p>
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

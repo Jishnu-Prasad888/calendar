@@ -45,4 +45,31 @@ describe('SettingsPage', () => {
       googleClientId: 'client.apps.googleusercontent.com',
     });
   });
+
+  it('opens and closes the complete Google setup guide', () => {
+    render(
+      <SettingsPage
+        preferences={preferences}
+        accounts={[]}
+        syncState={{ status: 'idle' }}
+        busy={false}
+        onUpdate={vi.fn()}
+        onConnect={vi.fn()}
+        onRemove={vi.fn()}
+        onSync={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open complete setup guide' }),
+    );
+    expect(
+      screen.getByRole('dialog', { name: 'Complete setup guide' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Enable the required Google APIs')).toBeVisible();
+    expect(screen.getByText('No client secret')).toBeVisible();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
 });
