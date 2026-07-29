@@ -152,9 +152,11 @@ impl GoogleClient {
 fn api_url(base: &str, segments: &[&str]) -> AppResult<Url> {
     let mut url = Url::parse(base)
         .map_err(|error| AppError::Internal(format!("invalid Google API URL: {error}")))?;
-    url.path_segments_mut()
-        .map_err(|_| AppError::Internal("Google API URL cannot hold path segments".into()))?
-        .extend(segments);
+    let mut path = url
+        .path_segments_mut()
+        .map_err(|_| AppError::Internal("Google API URL cannot hold path segments".into()))?;
+    path.pop_if_empty().extend(segments);
+    drop(path);
     Ok(url)
 }
 
@@ -220,6 +222,21 @@ mod tests {
     fn escapes_resource_ids_in_urls() {
         let url = GoogleClient::calendar_url(&["calendars", "team/calendar@example.com", "events"])
             .unwrap();
-        assert!(url.as_str().contains("team%2Fcalendar@example.com"));
+        assert_eq!(
+            url.as_str(),
+            "https://www.googleapis.com/calendar/v3/calendars/team%2Fcalendar@example.com/events"
+        );
+        assert_eq!(
+            GoogleClient::calendar_url(&["users", "me", "calendarList"])
+                .unwrap()
+                .as_str(),
+            "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+        );
+        assert_eq!(
+            GoogleClient::tasks_url(&["users", "@me", "lists"])
+                .unwrap()
+                .as_str(),
+            "https://tasks.googleapis.com/tasks/v1/users/@me/lists"
+        );
     }
 }

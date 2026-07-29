@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CalendarRange, RefreshCw, X } from 'lucide-react';
 import type {
   AppSnapshot,
@@ -92,6 +92,9 @@ export function App() {
   const [notice, setNotice] = useState<string>();
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const eventRange = useRef<{ start: string; end: string } | undefined>(
+    undefined,
+  );
 
   useAppearance(snapshot?.preferences);
 
@@ -124,8 +127,12 @@ export function App() {
     if (!snapshot || view !== 'year') return;
     const start = new Date(currentDate.getFullYear(), 0, 1);
     const end = new Date(currentDate.getFullYear() + 1, 0, 1);
+    eventRange.current = {
+      start: start.toISOString(),
+      end: end.toISOString(),
+    };
     void ipc
-      .getEvents(start.toISOString(), end.toISOString())
+      .getEvents(eventRange.current.start, eventRange.current.end)
       .then(setEvents)
       .catch((reason: unknown) =>
         setNotice(errorMessage(reason, 'Could not load events.')),
@@ -174,9 +181,13 @@ export function App() {
   }, [currentDate]);
 
   const loadEvents = (start: Date, end: Date) => {
+    eventRange.current = {
+      start: start.toISOString(),
+      end: end.toISOString(),
+    };
     setEventsLoading(true);
     void ipc
-      .getEvents(start.toISOString(), end.toISOString())
+      .getEvents(eventRange.current.start, eventRange.current.end)
       .then(setEvents)
       .catch((reason: unknown) =>
         setNotice(errorMessage(reason, 'Could not load events.')),
@@ -309,14 +320,41 @@ export function App() {
       ...snapshot,
       syncState: { ...snapshot.syncState, status: 'syncing' },
     });
-    void ipc
-      .syncNow()
-      .then((syncState) =>
-        setSnapshot((current) =>
-          current ? { ...current, syncState } : current,
-        ),
-      )
-      .catch((reason: unknown) => {
+    const previousCalendarIds = new Set(
+      snapshot.calendars.map((calendar) => calendar.id),
+    );
+    void (async () => {
+      try {
+        await ipc.syncNow();
+        const value = await ipc.bootstrap();
+        setSnapshot(value);
+        setVisibleCalendarIds(
+          (current) =>
+            new Set(
+              value.calendars
+                .filter(
+                  (calendar) =>
+                    current.has(calendar.id) ||
+                    (!previousCalendarIds.has(calendar.id) && calendar.visible),
+                )
+                .map((calendar) => calendar.id),
+            ),
+        );
+        if (eventRange.current) {
+          setEventsLoading(true);
+          setEvents(
+            await ipc.getEvents(
+              eventRange.current.start,
+              eventRange.current.end,
+            ),
+          );
+        }
+        if (value.syncState.status === 'error') {
+          setNotice(
+            value.syncState.message ?? 'Google synchronization failed.',
+          );
+        }
+      } catch (reason) {
         setSnapshot((current) =>
           current
             ? {
@@ -326,7 +364,10 @@ export function App() {
             : current,
         );
         setNotice(errorMessage(reason, 'Sync failed.'));
-      });
+      } finally {
+        setEventsLoading(false);
+      }
+    })();
   };
 
   const updatePreferences = (input: PreferenceInput) => {
@@ -382,7 +423,7 @@ export function App() {
     void ipc
       .startGoogleAuth()
       .then(() => ipc.bootstrap())
-      .then((value) => {
+      .then(async (value) => {
         setSnapshot(value);
         setVisibleCalendarIds(
           new Set(
@@ -391,11 +432,28 @@ export function App() {
               .map((calendar) => calendar.id),
           ),
         );
+        if (eventRange.current) {
+          setEventsLoading(true);
+          setEvents(
+            await ipc.getEvents(
+              eventRange.current.start,
+              eventRange.current.end,
+            ),
+          );
+        }
+        if (value.syncState.status === 'error') {
+          setNotice(
+            value.syncState.message ?? 'Google synchronization failed.',
+          );
+        }
       })
       .catch((reason: unknown) =>
         setNotice(errorMessage(reason, 'Could not connect account.')),
       )
-      .finally(() => setBusy(false));
+      .finally(() => {
+        setBusy(false);
+        setEventsLoading(false);
+      });
   };
 
   const removeAccount = (accountId: string) => {
