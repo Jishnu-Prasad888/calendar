@@ -24,6 +24,7 @@ import {
   localDateTimeValue,
   toIsoFromLocal,
 } from '../lib/date';
+import { errorMessage } from '../lib/error';
 
 export type EventDraft = {
   start: string;
@@ -156,13 +157,7 @@ export function EventDialog({
       availability,
     };
     void onSave(input).catch((reason: unknown) => {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : typeof reason === 'string' && reason.trim()
-            ? reason
-            : 'Could not save the event.',
-      );
+      setError(errorMessage(reason, 'Could not save the event.'));
     });
   };
 

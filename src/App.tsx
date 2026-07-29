@@ -19,6 +19,7 @@ import { TasksPage } from './components/TasksPage';
 import { TopBar } from './components/TopBar';
 import { useAppearance } from './hooks/useAppearance';
 import { addDays, dateKey } from './lib/date';
+import { errorMessage } from './lib/error';
 import { ipc } from './lib/ipc';
 
 type OpenDialog = {
@@ -112,11 +113,7 @@ export function App() {
       })
       .catch((reason: unknown) => {
         if (active)
-          setFatalError(
-            reason instanceof Error
-              ? reason.message
-              : 'Could not open Calendar.',
-          );
+          setFatalError(errorMessage(reason, 'Could not open Calendar.'));
       });
     return () => {
       active = false;
@@ -131,9 +128,7 @@ export function App() {
       .getEvents(start.toISOString(), end.toISOString())
       .then(setEvents)
       .catch((reason: unknown) =>
-        setNotice(
-          reason instanceof Error ? reason.message : 'Could not load events.',
-        ),
+        setNotice(errorMessage(reason, 'Could not load events.')),
       )
       .finally(() => setEventsLoading(false));
   }, [currentDate, snapshot, view]);
@@ -144,9 +139,7 @@ export function App() {
       .getTaskLists()
       .then(setTaskLists)
       .catch((reason: unknown) =>
-        setTasksError(
-          reason instanceof Error ? reason.message : 'Could not load tasks.',
-        ),
+        setTasksError(errorMessage(reason, 'Could not load tasks.')),
       )
       .finally(() => setTasksLoading(false));
   }, [page, taskLists.length]);
@@ -186,9 +179,7 @@ export function App() {
       .getEvents(start.toISOString(), end.toISOString())
       .then(setEvents)
       .catch((reason: unknown) =>
-        setNotice(
-          reason instanceof Error ? reason.message : 'Could not load events.',
-        ),
+        setNotice(errorMessage(reason, 'Could not load events.')),
       )
       .finally(() => setEventsLoading(false));
   };
@@ -249,9 +240,7 @@ export function App() {
       setDialog(undefined);
       setNotice('Event deleted.');
     } catch (reason) {
-      setNotice(
-        reason instanceof Error ? reason.message : 'Could not delete event.',
-      );
+      setNotice(errorMessage(reason, 'Could not delete event.'));
     } finally {
       setBusy(false);
     }
@@ -275,11 +264,7 @@ export function App() {
         current ? { ...current, event: updated } : current,
       );
     } catch (reason) {
-      setNotice(
-        reason instanceof Error
-          ? reason.message
-          : 'Could not update your response.',
-      );
+      setNotice(errorMessage(reason, 'Could not update your response.'));
     } finally {
       setBusy(false);
     }
@@ -313,11 +298,7 @@ export function App() {
       setEvents((current) =>
         current.map((item) => (item.id === event.id ? original : item)),
       );
-      setNotice(
-        reason instanceof Error
-          ? reason.message
-          : 'The event could not be moved.',
-      );
+      setNotice(errorMessage(reason, 'The event could not be moved.'));
       return false;
     }
   };
@@ -344,7 +325,7 @@ export function App() {
               }
             : current,
         );
-        setNotice(reason instanceof Error ? reason.message : 'Sync failed.');
+        setNotice(errorMessage(reason, 'Sync failed.'));
       });
   };
 
@@ -364,9 +345,7 @@ export function App() {
         setSnapshot((current) =>
           current ? { ...current, preferences: previous } : current,
         );
-        setNotice(
-          reason instanceof Error ? reason.message : 'Could not save settings.',
-        );
+        setNotice(errorMessage(reason, 'Could not save settings.'));
       });
   };
 
@@ -382,11 +361,7 @@ export function App() {
         );
       })
       .catch((reason: unknown) =>
-        setNotice(
-          reason instanceof Error
-            ? reason.message
-            : 'Could not connect account.',
-        ),
+        setNotice(errorMessage(reason, 'Could not connect account.')),
       )
       .finally(() => setBusy(false));
   };
@@ -411,11 +386,7 @@ export function App() {
         );
       })
       .catch((reason: unknown) =>
-        setNotice(
-          reason instanceof Error
-            ? reason.message
-            : 'Could not remove account.',
-        ),
+        setNotice(errorMessage(reason, 'Could not remove account.')),
       )
       .finally(() => setBusy(false));
   };
