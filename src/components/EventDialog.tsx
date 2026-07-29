@@ -119,6 +119,12 @@ export function EventDialog({
       setError('Add a title before saving.');
       return;
     }
+    if (!calendarId) {
+      setError(
+        'Connect a Google account with an editable calendar before saving.',
+      );
+      return;
+    }
     const normalizedStart = allDay ? start : toIsoFromLocal(start);
     const normalizedEnd = allDay
       ? dateKey(addDays(new Date(`${end}T12:00:00`), 1))
@@ -151,7 +157,11 @@ export function EventDialog({
     };
     void onSave(input).catch((reason: unknown) => {
       setError(
-        reason instanceof Error ? reason.message : 'Could not save the event.',
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === 'string' && reason.trim()
+            ? reason
+            : 'Could not save the event.',
       );
     });
   };
@@ -247,6 +257,9 @@ export function EventDialog({
               onChange={(change) => setCalendarId(change.target.value)}
               disabled={Boolean(event) || readOnly}
             >
+              {!event && editableCalendars.length === 0 && (
+                <option value="">No editable calendars</option>
+              )}
               {(event ? calendars : editableCalendars).map((calendar) => (
                 <option value={calendar.id} key={calendar.id}>
                   {calendar.name}
