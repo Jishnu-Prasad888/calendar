@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { CalendarSource } from '../domain';
 import { EventDialog } from './EventDialog';
@@ -65,5 +71,45 @@ describe('EventDialog', () => {
         screen.getByText('validation error: calendar is read-only'),
       ).toBeInTheDocument();
     });
+  });
+
+  it('selects event times with the in-app picker', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EventDialog
+        draft={draft}
+        calendars={[calendar]}
+        busy={false}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+        onRespond={vi.fn()}
+      />,
+    );
+
+    expect(
+      document.querySelector(
+        'input[type="date"], input[type="datetime-local"]',
+      ),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Add title'), {
+      target: { value: 'Planning' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Start:/ }));
+    const picker = screen.getByRole('dialog', {
+      name: 'Start date and time picker',
+    });
+    fireEvent.click(
+      within(picker).getAllByRole('option', { name: /Select.*9:15/i })[0],
+    );
+    fireEvent.click(within(picker).getByRole('button', { name: 'Done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        start: new Date('2026-07-30T09:15').toISOString(),
+      }),
+    );
   });
 });

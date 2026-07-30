@@ -25,6 +25,7 @@ import {
   toIsoFromLocal,
 } from '../lib/date';
 import { errorMessage } from '../lib/error';
+import { DateTimePicker } from './DateTimePicker';
 
 export type EventDraft = {
   start: string;
@@ -99,6 +100,7 @@ export function EventDialog({
   const [availability, setAvailability] = useState<EventAvailability>(
     event?.availability ?? 'busy',
   );
+  const [openDatePicker, setOpenDatePicker] = useState<'start' | 'end'>();
   const [error, setError] = useState<string>();
   const readOnly = event?.readOnly === true;
   const selfAttendee = event?.attendees.find((attendee) => attendee.self);
@@ -222,26 +224,41 @@ export function EventDialog({
 
           <div className="field-row date-field-row">
             <span />
-            <label>
-              Start
-              <input
-                aria-label="Start"
-                type={allDay ? 'date' : 'datetime-local'}
+            <div className="date-time-field">
+              <span>Start</span>
+              <DateTimePicker
+                label="Start"
                 value={start}
-                onChange={(change) => setStart(change.target.value)}
+                allDay={allDay}
+                open={openDatePicker === 'start'}
                 disabled={readOnly}
+                onChange={setStart}
+                onToggle={() =>
+                  setOpenDatePicker((current) =>
+                    current === 'start' ? undefined : 'start',
+                  )
+                }
+                onClose={() => setOpenDatePicker(undefined)}
               />
-            </label>
-            <label>
-              End
-              <input
-                aria-label="End"
-                type={allDay ? 'date' : 'datetime-local'}
+            </div>
+            <div className="date-time-field">
+              <span>End</span>
+              <DateTimePicker
+                label="End"
                 value={end}
-                onChange={(change) => setEnd(change.target.value)}
+                allDay={allDay}
+                open={openDatePicker === 'end'}
+                align="end"
                 disabled={readOnly}
+                onChange={setEnd}
+                onToggle={() =>
+                  setOpenDatePicker((current) =>
+                    current === 'end' ? undefined : 'end',
+                  )
+                }
+                onClose={() => setOpenDatePicker(undefined)}
               />
-            </label>
+            </div>
           </div>
 
           <label className="field-row">
