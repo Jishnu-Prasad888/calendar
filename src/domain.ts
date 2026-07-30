@@ -132,12 +132,32 @@ export type TaskList = {
   tasks: readonly Task[];
 };
 
+export type KeepNote = {
+  id: string;
+  title: string;
+  body: string;
+  color: string;
+  pinned: boolean;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KeepNoteInput = Pick<
+  KeepNote,
+  'title' | 'body' | 'color' | 'pinned' | 'archived'
+>;
+
 export type PreferenceInput = Partial<Preferences>;
 
 export type IpcClient = {
   bootstrap: () => Promise<AppSnapshot>;
   getEvents: (rangeStart: string, rangeEnd: string) => Promise<CalendarEvent[]>;
   getTaskLists: () => Promise<readonly TaskList[]>;
+  getKeepNotes: () => Promise<KeepNote[]>;
+  createKeepNote: (input: KeepNoteInput) => Promise<KeepNote>;
+  updateKeepNote: (noteId: string, input: KeepNoteInput) => Promise<KeepNote>;
+  deleteKeepNote: (noteId: string) => Promise<void>;
   startGoogleAuth: () => Promise<Account>;
   removeAccount: (accountId: string) => Promise<void>;
   syncNow: () => Promise<SyncState>;

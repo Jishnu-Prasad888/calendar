@@ -8,6 +8,8 @@ import type {
   EventInput,
   EventPatch,
   IpcClient,
+  KeepNote,
+  KeepNoteInput,
   OAuthConfiguration,
   Preferences,
   SyncState,
@@ -19,6 +21,7 @@ type DemoStore = {
   snapshot: AppSnapshot;
   events: CalendarEvent[];
   taskLists: readonly TaskList[];
+  keepNotes: KeepNote[];
   nextId: number;
 };
 
@@ -223,6 +226,18 @@ export function createDemoStore(today = new Date()): DemoStore {
         ],
       },
     ],
+    keepNotes: [
+      {
+        id: 'note-welcome',
+        title: 'Welcome to Notes',
+        body: 'Capture ideas here. Notes are stored locally on this device.',
+        color: '#fff8b8',
+        pinned: true,
+        archived: false,
+        createdAt: today.toISOString(),
+        updatedAt: today.toISOString(),
+      },
+    ],
     nextId: 100,
   };
 }
@@ -259,6 +274,34 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
         )
         .map(copyEvent),
     getTaskLists: async () => structuredClone(store.taskLists),
+    getKeepNotes: async () => structuredClone(store.keepNotes),
+    createKeepNote: async (input: KeepNoteInput) => {
+      const now = new Date().toISOString();
+      const note: KeepNote = {
+        ...input,
+        id: `note-${String(store.nextId++)}`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.keepNotes.push(note);
+      return { ...note };
+    },
+    updateKeepNote: async (noteId, input) => {
+      const index = store.keepNotes.findIndex((note) => note.id === noteId);
+      if (index < 0) throw new Error('Note was not found.');
+      const note: KeepNote = {
+        ...store.keepNotes[index],
+        ...input,
+        updatedAt: new Date().toISOString(),
+      };
+      store.keepNotes[index] = note;
+      return { ...note };
+    },
+    deleteKeepNote: async (noteId) => {
+      const index = store.keepNotes.findIndex((note) => note.id === noteId);
+      if (index < 0) throw new Error('Note was not found.');
+      store.keepNotes.splice(index, 1);
+    },
     startGoogleAuth: async () => {
       const account: Account = {
         id: `account-${String(store.nextId++)}`,
@@ -375,6 +418,12 @@ export function createTauriClient(): IpcClient {
     getEvents: (rangeStart, rangeEnd) =>
       invoke<CalendarEvent[]>('get_events', { rangeStart, rangeEnd }),
     getTaskLists: () => invoke<readonly TaskList[]>('get_task_lists'),
+    getKeepNotes: () => invoke<KeepNote[]>('get_keep_notes'),
+    createKeepNote: (input) => invoke<KeepNote>('create_keep_note', { input }),
+    updateKeepNote: (noteId, input) =>
+      invoke<KeepNote>('update_keep_note', { noteId, input }),
+    deleteKeepNote: (noteId) =>
+      invoke('delete_keep_note', { noteId }).then(() => undefined),
     startGoogleAuth: () => invoke<Account>('start_google_auth'),
     removeAccount: (accountId) =>
       invoke('remove_account', { accountId }).then(() => undefined),

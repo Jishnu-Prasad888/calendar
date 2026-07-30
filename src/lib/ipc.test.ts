@@ -54,6 +54,32 @@ describe('demo IPC client', () => {
     expect(preferences).toMatchObject({ theme: 'dark', weekStartsOn: 0 });
   });
 
+  it('creates, updates, and deletes local notes', async () => {
+    const client = createDemoClient(
+      createDemoStore(new Date('2026-07-20T12:00:00Z')),
+    );
+    const input = {
+      title: 'Idea',
+      body: 'Build it',
+      color: '#fff8b8',
+      pinned: false,
+      archived: false,
+    };
+    const created = await client.createKeepNote(input);
+    expect(created.title).toBe('Idea');
+
+    const updated = await client.updateKeepNote(created.id, {
+      ...input,
+      pinned: true,
+    });
+    expect(updated.pinned).toBe(true);
+
+    await client.deleteKeepNote(created.id);
+    expect(await client.getKeepNotes()).not.toContainEqual(
+      expect.objectContaining({ id: created.id }),
+    );
+  });
+
   it('uses camelCase Tauri arguments and sends complete preferences', async () => {
     const client = createTauriClient();
     const preferences: Preferences = {
@@ -75,6 +101,24 @@ describe('demo IPC client', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('get_events', {
       rangeStart: '2026-07-20T00:00:00Z',
       rangeEnd: '2026-07-21T00:00:00Z',
+    });
+
+    await client.updateKeepNote('note-1', {
+      title: 'Updated',
+      body: '',
+      color: '#fff8b8',
+      pinned: false,
+      archived: false,
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('update_keep_note', {
+      noteId: 'note-1',
+      input: {
+        title: 'Updated',
+        body: '',
+        color: '#fff8b8',
+        pinned: false,
+        archived: false,
+      },
     });
 
     await client.updatePreferences(preferences);
