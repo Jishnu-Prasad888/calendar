@@ -19,6 +19,17 @@ export function deleteChecklistSubtree(
   return [...items.slice(0, index), ...items.slice(end)];
 }
 
+export function insertChecklistItemAfterSubtree(
+  items: readonly KeepNoteItem[],
+  itemId: string,
+  newItem: KeepNoteItem,
+): KeepNoteItem[] {
+  const index = items.findIndex((item) => item.id === itemId);
+  if (index < 0) return [...items, newItem];
+  const insertAt = subtreeEnd(items, index);
+  return [...items.slice(0, insertAt), newItem, ...items.slice(insertAt)];
+}
+
 export function indentChecklistSubtree(
   items: readonly KeepNoteItem[],
   itemId: string,

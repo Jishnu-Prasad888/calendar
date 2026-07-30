@@ -218,4 +218,34 @@ describe('KeepPage', () => {
     );
     expect(screen.getByLabelText('List item 1')).toHaveValue('Build');
   });
+
+  it('adds and focuses a normal item on Enter without closing the note', () => {
+    const { onCreate } = renderKeepPage();
+    fireEvent.click(screen.getByRole('button', { name: 'New list' }));
+    const firstItem = screen.getByLabelText('List item 1');
+    fireEvent.change(firstItem, { target: { value: 'First' } });
+    fireEvent.keyDown(firstItem, { key: 'Enter' });
+
+    const secondItem = screen.getByLabelText('List item 2');
+    expect(secondItem).toHaveFocus();
+    expect(
+      screen.getByRole('dialog', { name: 'New list' }),
+    ).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it('adds a nested item at the same depth on Enter', async () => {
+    const { onUpdate } = renderKeepPage([checklistNote]);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Project' }));
+    fireEvent.keyDown(screen.getByLabelText('List item 2'), { key: 'Enter' });
+    const nestedItem = screen.getByLabelText('List item 3');
+    expect(nestedItem).toHaveFocus();
+    expect(nestedItem.closest('.keep-checklist-editor__row')).toHaveStyle({
+      marginLeft: '22px',
+    });
+    fireEvent.change(nestedItem, { target: { value: 'Nested follow-up' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+  });
 });

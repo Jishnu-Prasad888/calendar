@@ -4,6 +4,7 @@ import {
   deleteChecklistSubtree,
   indentCheckedSubtrees,
   indentChecklistSubtree,
+  insertChecklistItemAfterSubtree,
 } from './checklist';
 
 const items: KeepNoteItem[] = [
@@ -25,6 +26,23 @@ describe('checklist hierarchy', () => {
     expect(deleteChecklistSubtree(items, 'a').map((item) => item.id)).toEqual([
       'd',
     ]);
+  });
+
+  it('inserts after descendants while keeping the requested depth', () => {
+    const inserted = insertChecklistItemAfterSubtree(items, 'a', {
+      id: 'new',
+      text: '',
+      checked: false,
+      indent: 0,
+    });
+    expect(inserted.map((item) => item.id)).toEqual([
+      'a',
+      'b',
+      'c',
+      'new',
+      'd',
+    ]);
+    expect(inserted[3].indent).toBe(0);
   });
 
   it('does not apply a batch move twice to checked descendants', () => {

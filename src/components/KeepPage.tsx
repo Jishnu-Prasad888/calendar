@@ -25,6 +25,7 @@ import {
   deleteChecklistSubtree,
   indentCheckedSubtrees,
   indentChecklistSubtree,
+  insertChecklistItemAfterSubtree,
 } from '../lib/checklist';
 import { errorMessage } from '../lib/error';
 
@@ -73,8 +74,8 @@ function cloneInput(input: KeepNoteInput): KeepNoteInput {
   return { ...input, items: input.items.map((item) => ({ ...item })) };
 }
 
-function newChecklistItem(): KeepNoteItem {
-  return { id: crypto.randomUUID(), text: '', checked: false, indent: 0 };
+function newChecklistItem(indent = 0): KeepNoteItem {
+  return { id: crypto.randomUUID(), text: '', checked: false, indent };
 }
 
 function newNoteInput(archived: boolean, kind: KeepNoteKind): KeepNoteInput {
@@ -107,6 +108,7 @@ export function KeepPage({
   const draggedItem = useRef<{ id: string; startX: number } | undefined>(
     undefined,
   );
+  const pendingItemFocus = useRef<string | undefined>(undefined);
 
   const undoEditor = () => {
     setEditor((current) => {
@@ -320,6 +322,25 @@ export function KeepPage({
           onChange={(event) =>
             updateChecklistItem(item.id, { text: event.target.value })
           }
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            const nextItem = newChecklistItem(item.indent);
+            pendingItemFocus.current = nextItem.id;
+            updateEditor({
+              items: insertChecklistItemAfterSubtree(
+                editor?.input.items ?? [],
+                item.id,
+                nextItem,
+              ),
+            });
+          }}
+          ref={(node) => {
+            if (node && pendingItemFocus.current === item.id) {
+              pendingItemFocus.current = undefined;
+              node.focus();
+            }
+          }}
           placeholder="List item"
           disabled={busy}
         />
@@ -621,7 +642,6 @@ export function KeepPage({
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                saveEditor();
               }}
             >
               <label>
@@ -755,8 +775,9 @@ export function KeepPage({
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="button"
                   className="keep-editor__button keep-editor__button--primary"
+                  onClick={saveEditor}
                   disabled={busy}
                 >
                   {busy ? 'Saving…' : 'Save'}
