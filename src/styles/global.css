@@ -2226,13 +2226,13 @@ button:disabled {
     5px 7px 13px rgb(24 34 48 / 13%),
     inset 1px 1px 1px rgb(255 255 255 / 24%);
   transition:
-    transform 130ms ease,
+    border-color 130ms ease,
     box-shadow 130ms ease;
 }
 .keep-card:hover {
-  transform: translateY(-2px);
+  border-color: color-mix(in srgb, currentColor 34%, transparent);
   box-shadow:
-    7px 10px 18px rgb(24 34 48 / 17%),
+    6px 9px 17px rgb(24 34 48 / 18%),
     inset 1px 1px 1px rgb(255 255 255 / 24%);
 }
 .keep-card__open {
