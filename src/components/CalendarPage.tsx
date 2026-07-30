@@ -14,6 +14,7 @@ import type {
 } from '@fullcalendar/core';
 import { LockKeyhole } from 'lucide-react';
 import type { CalendarEvent, CalendarView, EventPatch } from '../domain';
+import { eventTextColor } from '../lib/color';
 import { addDays, dateKey, datesInMonth } from '../lib/date';
 
 type Selection = {
@@ -246,6 +247,7 @@ export function CalendarPage({
           allDay: event.allDay,
           backgroundColor: event.color,
           borderColor: event.color,
+          textColor: eventTextColor(event.color),
           editable: !event.readOnly,
           extendedProps: { readOnly: event.readOnly, pending: event.pending },
         }))}
