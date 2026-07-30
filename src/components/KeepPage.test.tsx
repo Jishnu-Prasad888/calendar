@@ -16,6 +16,23 @@ const note: KeepNote = {
   updatedAt: '2026-07-30T10:00:00Z',
 };
 
+const checklistNote: KeepNote = {
+  id: 'note-list',
+  kind: 'checklist',
+  title: 'Project',
+  body: '',
+  items: [
+    { id: 'parent', text: 'Build', checked: false, indent: 0 },
+    { id: 'child', text: 'Tests', checked: true, indent: 1 },
+    { id: 'sibling', text: 'Ship', checked: false, indent: 0 },
+  ],
+  color: '#cbf0f8',
+  pinned: false,
+  archived: false,
+  createdAt: '2026-07-30T10:00:00Z',
+  updatedAt: '2026-07-30T10:00:00Z',
+};
+
 function renderKeepPage(
   notes: readonly KeepNote[] = [],
   onCreate = vi.fn().mockResolvedValue(undefined),
@@ -110,6 +127,71 @@ describe('KeepPage', () => {
         items: [
           expect.objectContaining({ text: 'Milk', checked: false }),
           expect.objectContaining({ text: 'Bread', checked: true }),
+        ],
+      }),
+    );
+  });
+
+  it('deletes a list item together with nested items', async () => {
+    const { onUpdate } = renderKeepPage([checklistNote]);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Project' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Remove item 1 and nested items',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+    expect(onUpdate).toHaveBeenCalledWith(
+      'note-list',
+      expect.objectContaining({
+        items: [{ id: 'sibling', text: 'Ship', checked: false, indent: 0 }],
+      }),
+    );
+  });
+
+  it('supports undo and redo buttons and keyboard shortcuts', () => {
+    renderKeepPage([note]);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Trip ideas' }));
+    const title = screen.getByLabelText('Note title');
+    fireEvent.change(title, { target: { value: 'First edit' } });
+    fireEvent.change(title, { target: { value: 'Second edit' } });
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(title).toHaveValue('First edit');
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+    expect(title).toHaveValue('Second edit');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(title).toHaveValue('First edit');
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(title).toHaveValue('Second edit');
+  });
+
+  it('keeps checked items in a collapsed completed section', () => {
+    renderKeepPage([checklistNote]);
+
+    const completed = screen.getByText('Completed (1)').closest('details');
+    expect(completed).not.toHaveAttribute('open');
+    expect(screen.getByText('Build')).toBeVisible();
+  });
+
+  it('outdents checked items with the batch arrow control', async () => {
+    const { onUpdate } = renderKeepPage([checklistNote]);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Project' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Outdent checked items' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+    expect(onUpdate).toHaveBeenCalledWith(
+      'note-list',
+      expect.objectContaining({
+        items: [
+          { id: 'parent', text: 'Build', checked: false, indent: 0 },
+          { id: 'child', text: 'Tests', checked: true, indent: 0 },
+          { id: 'sibling', text: 'Ship', checked: false, indent: 0 },
         ],
       }),
     );

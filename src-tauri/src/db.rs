@@ -96,6 +96,7 @@ struct KeepNoteItemRow {
     note_id: String,
     text: String,
     checked: bool,
+    indent: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -458,7 +459,7 @@ impl Repository {
         .fetch_all(&self.pool)
         .await?;
         let item_rows: Vec<KeepNoteItemRow> = sqlx::query_as(
-            "SELECT id,note_id,text,checked FROM keep_note_items ORDER BY note_id,position",
+            "SELECT id,note_id,text,checked,indent FROM keep_note_items ORDER BY note_id,position",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -471,6 +472,7 @@ impl Repository {
                     id: item.id,
                     text: item.text,
                     checked: item.checked,
+                    indent: item.indent,
                 });
         }
         rows.into_iter()
@@ -501,13 +503,14 @@ impl Repository {
         .await?;
         for (position, item) in input.items.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO keep_note_items(id,note_id,text,checked,position) VALUES(?,?,?,?,?)",
+                "INSERT INTO keep_note_items(id,note_id,text,checked,position,indent) VALUES(?,?,?,?,?,?)",
             )
             .bind(&item.id)
             .bind(&id)
             .bind(&item.text)
             .bind(item.checked)
             .bind(position as i64)
+            .bind(item.indent)
             .execute(&mut *transaction)
             .await?;
         }
@@ -543,13 +546,14 @@ impl Repository {
             .await?;
         for (position, item) in input.items.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO keep_note_items(id,note_id,text,checked,position) VALUES(?,?,?,?,?)",
+                "INSERT INTO keep_note_items(id,note_id,text,checked,position,indent) VALUES(?,?,?,?,?,?)",
             )
             .bind(&item.id)
             .bind(note_id)
             .bind(&item.text)
             .bind(item.checked)
             .bind(position as i64)
+            .bind(item.indent)
             .execute(&mut *transaction)
             .await?;
         }
@@ -579,7 +583,7 @@ impl Repository {
         .await?
         .ok_or_else(|| AppError::NotFound(format!("keep note {note_id}")))?;
         let items = sqlx::query_as::<_, KeepNoteItemRow>(
-            "SELECT id,note_id,text,checked FROM keep_note_items WHERE note_id=? ORDER BY position",
+            "SELECT id,note_id,text,checked,indent FROM keep_note_items WHERE note_id=? ORDER BY position",
         )
         .bind(note_id)
         .fetch_all(&self.pool)
@@ -589,6 +593,7 @@ impl Repository {
             id: item.id,
             text: item.text,
             checked: item.checked,
+            indent: item.indent,
         })
         .collect();
         keep_note_from_row(row, items)
@@ -939,7 +944,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keep_notes_migration_defaults_existing_notes_to_text() {
+    async fn keep_notes_migrations_default_existing_kinds_and_item_indents() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(
@@ -971,6 +976,21 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO keep_note_items(id,note_id,text,checked,position) VALUES(?,?,?,?,?)",
+        )
+        .bind("existing-item")
+        .bind("existing")
+        .bind("Item")
+        .bind(false)
+        .bind(0_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!("../migrations/0004_keep_note_item_indent.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let kind: String = sqlx::query_scalar("SELECT kind FROM keep_notes WHERE id='existing'")
             .fetch_one(&pool)
@@ -984,10 +1004,28 @@ mod tests {
         .await
         .unwrap();
         assert!(item_table_exists);
+        let indent: i64 =
+            sqlx::query_scalar("SELECT indent FROM keep_note_items WHERE id='existing-item'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(indent, 0);
+        assert!(
+            sqlx::query("UPDATE keep_note_items SET indent=-1 WHERE id='existing-item'")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+        assert!(
+            sqlx::query("UPDATE keep_note_items SET indent=9 WHERE id='existing-item'")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
-    async fn keep_notes_round_trip_text_and_ordered_checklist_items() {
+    async fn keep_notes_round_trip_text_and_ordered_checklist_hierarchy() {
         let repo = Repository::memory().await.unwrap();
         let text_note = repo
             .create_keep_note(&KeepNoteInput {
@@ -1017,11 +1055,13 @@ mod tests {
                         id: first_id.into(),
                         text: "Milk".into(),
                         checked: false,
+                        indent: 0,
                     },
                     crate::model::KeepNoteItemInput {
                         id: second_id.into(),
                         text: "Bread".into(),
                         checked: true,
+                        indent: 1,
                     },
                 ],
                 color: "#fbbc04".into(),
@@ -1033,8 +1073,10 @@ mod tests {
         assert_eq!(created.kind, KeepNoteKind::Checklist);
         assert_eq!(created.items[0].id, first_id);
         assert!(!created.items[0].checked);
+        assert_eq!(created.items[0].indent, 0);
         assert_eq!(created.items[1].id, second_id);
         assert!(created.items[1].checked);
+        assert_eq!(created.items[1].indent, 1);
         assert!(chrono::DateTime::parse_from_rfc3339(&created.created_at).is_ok());
         assert!(chrono::DateTime::parse_from_rfc3339(&created.updated_at).is_ok());
 
@@ -1043,6 +1085,7 @@ mod tests {
         let listed = notes.iter().find(|note| note.id == created.id).unwrap();
         assert_eq!(listed.items[0].id, first_id);
         assert_eq!(listed.items[1].id, second_id);
+        assert_eq!(listed.items[1].indent, 1);
 
         let updated = repo
             .update_keep_note(
@@ -1056,11 +1099,13 @@ mod tests {
                             id: second_id.into(),
                             text: "Bread".into(),
                             checked: false,
+                            indent: 0,
                         },
                         crate::model::KeepNoteItemInput {
                             id: first_id.into(),
                             text: "Milk".into(),
                             checked: true,
+                            indent: 1,
                         },
                     ],
                     color: "rgb(255, 0, 0)".into(),
@@ -1073,8 +1118,10 @@ mod tests {
         assert_eq!(updated.title, "Done");
         assert_eq!(updated.items[0].id, second_id);
         assert!(!updated.items[0].checked);
+        assert_eq!(updated.items[0].indent, 0);
         assert_eq!(updated.items[1].id, first_id);
         assert!(updated.items[1].checked);
+        assert_eq!(updated.items[1].indent, 1);
         assert_eq!(updated.color, "rgb(255, 0, 0)");
         assert!(updated.pinned);
         assert!(updated.archived);

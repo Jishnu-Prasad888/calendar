@@ -11,7 +11,7 @@ A claymorphic Google Calendar desktop client built with Tauri, Rust, React, and 
 - Multiple Google accounts and calendars
 - Incremental bidirectional Calendar synchronization with an offline mutation queue
 - Read-only Google Tasks page
-- Keep-inspired local notes with editing, colors, pinning, and archiving
+- Keep-inspired local notes with nested checklists, undo/redo, colors, pinning, and archiving
 - Native popup reminders, system tray operation, and optional launch at startup
 - Configurable local clay theme with light, dark, and system modes
 

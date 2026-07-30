@@ -250,6 +250,7 @@ pub struct KeepNoteItem {
     pub id: String,
     pub text: String,
     pub checked: bool,
+    pub indent: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +259,7 @@ pub struct KeepNoteItemInput {
     pub id: String,
     pub text: String,
     pub checked: bool,
+    pub indent: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,6 +321,7 @@ impl KeepNoteInput {
                 }
 
                 let mut ids = std::collections::HashSet::with_capacity(self.items.len());
+                let mut previous_indent = None;
                 for item in &self.items {
                     let id = uuid::Uuid::parse_str(&item.id)
                         .map_err(|_| "checklist item id must be a valid UUID")?;
@@ -331,6 +334,19 @@ impl KeepNoteInput {
                     if item.text.chars().count() > 10_000 {
                         return Err("checklist item text must be at most 10000 characters".into());
                     }
+                    if !(0..=8).contains(&item.indent) {
+                        return Err("checklist item indent must be between 0 and 8".into());
+                    }
+                    match previous_indent {
+                        None if item.indent != 0 => {
+                            return Err("first checklist item indent must be 0".into());
+                        }
+                        Some(previous) if item.indent > previous + 1 => {
+                            return Err("checklist item indent can increase by at most one".into());
+                        }
+                        _ => {}
+                    }
+                    previous_indent = Some(item.indent);
                 }
             }
         }
@@ -665,6 +681,7 @@ mod tests {
             id: "00000000-0000-4000-8000-000000000001".into(),
             text: "Milk".into(),
             checked: false,
+            indent: 0,
         };
         let valid = KeepNoteInput {
             kind: KeepNoteKind::Checklist,
@@ -757,12 +774,41 @@ mod tests {
     }
 
     #[test]
+    fn keep_note_input_rejects_invalid_checklist_hierarchy() {
+        let item = |id, indent| KeepNoteItemInput {
+            id: uuid::Uuid::from_u128(id).to_string(),
+            text: "Item".into(),
+            checked: false,
+            indent,
+        };
+        let input = |items| KeepNoteInput {
+            kind: KeepNoteKind::Checklist,
+            title: "List".into(),
+            body: String::new(),
+            items,
+            color: "white".into(),
+            pinned: false,
+            archived: false,
+        };
+
+        assert!(input(vec![item(1, 1)]).validate().is_err());
+        assert!(input(vec![item(1, 0), item(2, 2)]).validate().is_err());
+        assert!(input(vec![item(1, 0), item(2, -1)]).validate().is_err());
+        assert!(
+            input(vec![item(1, 0), item(2, 1), item(3, 9)])
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
     fn keep_note_input_rejects_too_many_checklist_items() {
         let items = (0..501)
             .map(|index| KeepNoteItemInput {
                 id: uuid::Uuid::from_u128(index + 1).to_string(),
                 text: "Item".into(),
                 checked: false,
+                indent: 0,
             })
             .collect();
         assert!(
@@ -865,6 +911,7 @@ mod tests {
                 id: "item".into(),
                 text: "Milk".into(),
                 checked: true,
+                indent: 1,
             }],
             color: "yellow".into(),
             pinned: false,
@@ -875,6 +922,7 @@ mod tests {
         .unwrap();
         assert_eq!(note["kind"], "checklist");
         assert_eq!(note["items"][0]["checked"], true);
+        assert_eq!(note["items"][0]["indent"], 1);
         assert!(
             serde_json::from_value::<KeepNoteInput>(serde_json::json!({
                 "kind": "unknown",

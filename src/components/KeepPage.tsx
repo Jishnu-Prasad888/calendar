@@ -1,12 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
+  ArrowLeft,
+  ArrowRight,
+  GripVertical,
   ListChecks,
   Pin,
   Plus,
+  Redo2,
   StickyNote,
   Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
 import type {
@@ -16,6 +21,11 @@ import type {
   KeepNoteKind,
 } from '../domain';
 import { eventTextColor } from '../lib/color';
+import {
+  deleteChecklistSubtree,
+  indentCheckedSubtrees,
+  indentChecklistSubtree,
+} from '../lib/checklist';
 import { errorMessage } from '../lib/error';
 
 type KeepPageProps = {
@@ -31,6 +41,8 @@ type KeepPageProps = {
 type EditorState = {
   note?: KeepNote;
   input: KeepNoteInput;
+  past: KeepNoteInput[];
+  future: KeepNoteInput[];
 };
 
 const noteColors = [
@@ -57,8 +69,12 @@ function noteInput(note: KeepNote): KeepNoteInput {
   };
 }
 
+function cloneInput(input: KeepNoteInput): KeepNoteInput {
+  return { ...input, items: input.items.map((item) => ({ ...item })) };
+}
+
 function newChecklistItem(): KeepNoteItem {
-  return { id: crypto.randomUUID(), text: '', checked: false };
+  return { id: crypto.randomUUID(), text: '', checked: false, indent: 0 };
 }
 
 function newNoteInput(archived: boolean, kind: KeepNoteKind): KeepNoteInput {
@@ -88,14 +104,56 @@ export function KeepPage({
   const [actionError, setActionError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [actionNoteId, setActionNoteId] = useState<string>();
+  const draggedItem = useRef<{ id: string; startX: number } | undefined>(
+    undefined,
+  );
+
+  const undoEditor = () => {
+    setEditor((current) => {
+      const previous = current?.past.at(-1);
+      if (!current || !previous) return current;
+      return {
+        ...current,
+        input: cloneInput(previous),
+        past: current.past.slice(0, -1),
+        future: [cloneInput(current.input), ...current.future],
+      };
+    });
+  };
+
+  const redoEditor = () => {
+    setEditor((current) => {
+      const next = current?.future[0];
+      if (!current || !next) return current;
+      return {
+        ...current,
+        input: cloneInput(next),
+        past: [...current.past, cloneInput(current.input)],
+        future: current.future.slice(1),
+      };
+    });
+  };
 
   useEffect(() => {
     if (!editor || busy) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setEditor(undefined);
+    const handleEditorKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setEditor(undefined);
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLocaleLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redoEditor();
+        else undoEditor();
+      } else if (key === 'y') {
+        event.preventDefault();
+        redoEditor();
+      }
     };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    window.addEventListener('keydown', handleEditorKey);
+    return () => window.removeEventListener('keydown', handleEditorKey);
   }, [busy, editor]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -104,7 +162,10 @@ export function KeepPage({
       note.archived === (filter === 'archive') &&
       (normalizedQuery.length === 0 ||
         note.title.toLocaleLowerCase().includes(normalizedQuery) ||
-        note.body.toLocaleLowerCase().includes(normalizedQuery)),
+        note.body.toLocaleLowerCase().includes(normalizedQuery) ||
+        note.items.some((item) =>
+          item.text.toLocaleLowerCase().includes(normalizedQuery),
+        )),
   );
   const pinnedNotes = visibleNotes.filter((note) => note.pinned);
   const otherNotes = visibleNotes.filter((note) => !note.pinned);
@@ -113,13 +174,22 @@ export function KeepPage({
     setEditor({
       note,
       input: note ? noteInput(note) : newNoteInput(filter === 'archive', kind),
+      past: [],
+      future: [],
     });
     setEditorError(undefined);
   };
 
   const updateEditor = (patch: Partial<KeepNoteInput>) => {
     setEditor((current) =>
-      current ? { ...current, input: { ...current.input, ...patch } } : current,
+      current
+        ? {
+            ...current,
+            input: { ...current.input, ...patch },
+            past: [...current.past, cloneInput(current.input)].slice(-100),
+            future: [],
+          }
+        : current,
     );
   };
 
@@ -127,19 +197,12 @@ export function KeepPage({
     itemId: string,
     patch: Partial<KeepNoteItem>,
   ) => {
-    setEditor((current) =>
-      current
-        ? {
-            ...current,
-            input: {
-              ...current.input,
-              items: current.input.items.map((item) =>
-                item.id === itemId ? { ...item, ...patch } : item,
-              ),
-            },
-          }
-        : current,
-    );
+    updateEditor({
+      items:
+        editor?.input.items.map((item) =>
+          item.id === itemId ? { ...item, ...patch } : item,
+        ) ?? [],
+    });
   };
 
   const saveEditor = () => {
@@ -198,11 +261,111 @@ export function KeepPage({
       .finally(() => setActionNoteId(undefined));
   };
 
+  const renderEditorItem = (item: KeepNoteItem) => {
+    const index = editor?.input.items.findIndex(
+      (current) => current.id === item.id,
+    );
+    const itemNumber = (index ?? 0) + 1;
+    return (
+      <div
+        className="keep-checklist-editor__row"
+        key={item.id}
+        style={{ marginLeft: `${String(item.indent * 22)}px` }}
+      >
+        <button
+          type="button"
+          className="keep-checklist-editor__handle"
+          aria-label={`Drag item ${String(itemNumber)} left or right to change nesting`}
+          title="Drag left or right to change nesting"
+          draggable
+          onDragStart={(event) => {
+            draggedItem.current = { id: item.id, startX: event.clientX };
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', item.id);
+          }}
+          onDragEnd={(event) => {
+            const dragged = draggedItem.current;
+            draggedItem.current = undefined;
+            if (!dragged || event.clientX <= 0) return;
+            const distance = event.clientX - dragged.startX;
+            if (Math.abs(distance) < 24) return;
+            updateEditor({
+              items: indentChecklistSubtree(
+                editor?.input.items ?? [],
+                dragged.id,
+                distance > 0 ? 1 : -1,
+              ),
+            });
+          }}
+          disabled={busy}
+        >
+          <GripVertical size={15} />
+        </button>
+        <input
+          type="checkbox"
+          aria-label={`Mark item ${String(itemNumber)} complete`}
+          checked={item.checked}
+          onChange={(event) =>
+            updateChecklistItem(item.id, { checked: event.target.checked })
+          }
+          disabled={busy}
+        />
+        <input
+          type="text"
+          aria-label={`List item ${String(itemNumber)}`}
+          value={item.text}
+          onChange={(event) =>
+            updateChecklistItem(item.id, { text: event.target.value })
+          }
+          placeholder="List item"
+          disabled={busy}
+        />
+        <button
+          type="button"
+          aria-label={`Remove item ${String(itemNumber)} and nested items`}
+          onClick={() =>
+            updateEditor({
+              items: deleteChecklistSubtree(editor?.input.items ?? [], item.id),
+            })
+          }
+          disabled={busy}
+        >
+          <X size={15} />
+        </button>
+      </div>
+    );
+  };
+
   const renderCards = (sectionNotes: readonly KeepNote[]) => (
     <div className="keep-grid">
       {sectionNotes.map((note) => {
         const label = note.title.trim() ? note.title.trim() : 'Untitled note';
         const foreground = eventTextColor(note.color);
+        const activeItems = note.items.filter((item) => !item.checked);
+        const completedItems = note.items.filter((item) => item.checked);
+        const renderCardItem = (item: KeepNoteItem) => (
+          <label
+            key={item.id}
+            data-checked={item.checked}
+            style={{ paddingLeft: `${String(item.indent * 14)}px` }}
+          >
+            <input
+              type="checkbox"
+              checked={item.checked}
+              disabled={actionNoteId === note.id}
+              onChange={() =>
+                quickUpdate(note, {
+                  items: note.items.map((current) =>
+                    current.id === item.id
+                      ? { ...current, checked: !current.checked }
+                      : current,
+                  ),
+                })
+              }
+            />
+            <span>{item.text}</span>
+          </label>
+        );
         return (
           <article
             className="keep-card"
@@ -220,27 +383,15 @@ export function KeepPage({
             </button>
             {note.kind === 'checklist' && (
               <div className="keep-card__checklist">
-                {note.items.slice(0, 8).map((item) => (
-                  <label key={item.id} data-checked={item.checked}>
-                    <input
-                      type="checkbox"
-                      checked={item.checked}
-                      disabled={actionNoteId === note.id}
-                      onChange={() =>
-                        quickUpdate(note, {
-                          items: note.items.map((current) =>
-                            current.id === item.id
-                              ? { ...current, checked: !current.checked }
-                              : current,
-                          ),
-                        })
-                      }
-                    />
-                    <span>{item.text}</span>
-                  </label>
-                ))}
-                {note.items.length > 8 && (
-                  <small>+{note.items.length - 8} more</small>
+                {activeItems.slice(0, 8).map(renderCardItem)}
+                {activeItems.length > 8 && (
+                  <small>+{activeItems.length - 8} more</small>
+                )}
+                {completedItems.length > 0 && (
+                  <details className="keep-card__completed">
+                    <summary>Completed ({completedItems.length})</summary>
+                    {completedItems.map(renderCardItem)}
+                  </details>
                 )}
               </div>
             )}
@@ -393,15 +544,76 @@ export function KeepPage({
                     ? 'New list'
                     : 'New note'}
               </h2>
-              <button
-                type="button"
-                className="keep-editor__icon"
-                aria-label="Close editor"
-                onClick={() => setEditor(undefined)}
-                disabled={busy}
-              >
-                <X size={19} />
-              </button>
+              <div className="keep-editor__header-actions">
+                {editor.input.kind === 'checklist' && (
+                  <>
+                    <button
+                      type="button"
+                      className="keep-editor__icon"
+                      aria-label="Outdent checked items"
+                      title="Move checked items left"
+                      onClick={() =>
+                        updateEditor({
+                          items: indentCheckedSubtrees(editor.input.items, -1),
+                        })
+                      }
+                      disabled={
+                        busy ||
+                        !editor.input.items.some(
+                          (item) => item.checked && item.indent > 0,
+                        )
+                      }
+                    >
+                      <ArrowLeft size={17} />
+                    </button>
+                    <button
+                      type="button"
+                      className="keep-editor__icon"
+                      aria-label="Indent checked items"
+                      title="Move checked items right"
+                      onClick={() =>
+                        updateEditor({
+                          items: indentCheckedSubtrees(editor.input.items, 1),
+                        })
+                      }
+                      disabled={
+                        busy || !editor.input.items.some((item) => item.checked)
+                      }
+                    >
+                      <ArrowRight size={17} />
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="keep-editor__icon"
+                  aria-label="Undo"
+                  title="Undo (Ctrl+Z)"
+                  onClick={undoEditor}
+                  disabled={busy || editor.past.length === 0}
+                >
+                  <Undo2 size={17} />
+                </button>
+                <button
+                  type="button"
+                  className="keep-editor__icon"
+                  aria-label="Redo"
+                  title="Redo (Ctrl+Y or Ctrl+Shift+Z)"
+                  onClick={redoEditor}
+                  disabled={busy || editor.future.length === 0}
+                >
+                  <Redo2 size={17} />
+                </button>
+                <button
+                  type="button"
+                  className="keep-editor__icon"
+                  aria-label="Close editor"
+                  onClick={() => setEditor(undefined)}
+                  disabled={busy}
+                >
+                  <X size={19} />
+                </button>
+              </div>
             </header>
             <form
               onSubmit={(event) => {
@@ -437,47 +649,9 @@ export function KeepPage({
                 </label>
               ) : (
                 <div className="keep-checklist-editor">
-                  {editor.input.items.map((item, index) => (
-                    <div key={item.id}>
-                      <input
-                        type="checkbox"
-                        aria-label={`Mark item ${String(index + 1)} complete`}
-                        checked={item.checked}
-                        onChange={(event) =>
-                          updateChecklistItem(item.id, {
-                            checked: event.target.checked,
-                          })
-                        }
-                        disabled={busy}
-                      />
-                      <input
-                        type="text"
-                        aria-label={`List item ${String(index + 1)}`}
-                        value={item.text}
-                        onChange={(event) =>
-                          updateChecklistItem(item.id, {
-                            text: event.target.value,
-                          })
-                        }
-                        placeholder="List item"
-                        disabled={busy}
-                      />
-                      <button
-                        type="button"
-                        aria-label={`Remove item ${String(index + 1)}`}
-                        onClick={() =>
-                          updateEditor({
-                            items: editor.input.items.filter(
-                              (current) => current.id !== item.id,
-                            ),
-                          })
-                        }
-                        disabled={busy}
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                  ))}
+                  {editor.input.items
+                    .filter((item) => !item.checked)
+                    .map(renderEditorItem)}
                   <button
                     type="button"
                     className="keep-checklist-editor__add"
@@ -490,6 +664,23 @@ export function KeepPage({
                   >
                     <Plus size={15} /> Add item
                   </button>
+                  {editor.input.items.some((item) => item.checked) && (
+                    <details className="keep-checklist-editor__completed">
+                      <summary>
+                        Completed (
+                        {
+                          editor.input.items.filter((item) => item.checked)
+                            .length
+                        }
+                        )
+                      </summary>
+                      <div>
+                        {editor.input.items
+                          .filter((item) => item.checked)
+                          .map(renderEditorItem)}
+                      </div>
+                    </details>
+                  )}
                 </div>
               )}
               <fieldset className="keep-palette">

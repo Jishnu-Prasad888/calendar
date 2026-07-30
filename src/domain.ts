@@ -138,6 +138,7 @@ export type KeepNoteItem = {
   id: string;
   text: string;
   checked: boolean;
+  indent: number;
 };
 
 export type KeepNote = {
