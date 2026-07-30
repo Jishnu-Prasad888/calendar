@@ -209,25 +209,28 @@ export function KeepPage({
 
   const saveEditor = () => {
     if (!editor) return;
-    const input = {
-      ...editor.input,
-      title: editor.input.title.trim(),
-      body: editor.input.kind === 'text' ? editor.input.body.trim() : '',
-      items:
-        editor.input.kind === 'checklist'
-          ? editor.input.items
-              .map((item) => ({ ...item, text: item.text.trim() }))
-              .filter((item) => item.text)
-          : [],
-    };
-    if (!input.title && !input.body && input.items.length === 0) {
+    const title = editor.input.title.trim();
+    const body = editor.input.kind === 'text' ? editor.input.body.trim() : '';
+    const items =
+      editor.input.kind === 'checklist'
+        ? editor.input.items
+            .map((item) => ({ ...item, text: item.text.trim() }))
+            .filter((item) => item.text)
+        : [];
+    if (!title && !body && items.length === 0) {
       setEditorError(
-        input.kind === 'checklist'
+        editor.input.kind === 'checklist'
           ? 'Add a title or at least one list item before saving.'
           : 'Add a title or note before saving.',
       );
       return;
     }
+    const input = {
+      ...editor.input,
+      title: title || 'Untitled',
+      body,
+      items,
+    };
     setBusy(true);
     setEditorError(undefined);
     const request = editor.note

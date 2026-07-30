@@ -248,4 +248,18 @@ describe('KeepPage', () => {
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
   });
+
+  it('saves content-bearing notes without a title as Untitled', async () => {
+    const { onCreate } = renderKeepPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Take a note' }));
+    fireEvent.change(screen.getByLabelText('Note body'), {
+      target: { value: 'A note without a heading' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Untitled' }),
+    );
+  });
 });

@@ -486,13 +486,18 @@ impl Repository {
     pub async fn create_keep_note(&self, input: &KeepNoteInput) -> AppResult<KeepNote> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
+        let title = if input.title.trim().is_empty() {
+            "Untitled"
+        } else {
+            &input.title
+        };
         let mut transaction = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO keep_notes(id,kind,title,body,color,pinned,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
         )
         .bind(&id)
         .bind(input.kind.as_str())
-        .bind(&input.title)
+        .bind(title)
         .bind(&input.body)
         .bind(&input.color)
         .bind(input.pinned)
@@ -523,12 +528,17 @@ impl Repository {
         note_id: &str,
         input: &KeepNoteInput,
     ) -> AppResult<KeepNote> {
+        let title = if input.title.trim().is_empty() {
+            "Untitled"
+        } else {
+            &input.title
+        };
         let mut transaction = self.pool.begin().await?;
         let result = sqlx::query(
             "UPDATE keep_notes SET kind=?,title=?,body=?,color=?,pinned=?,archived=?,updated_at=? WHERE id=?",
         )
         .bind(input.kind.as_str())
-        .bind(&input.title)
+        .bind(title)
         .bind(&input.body)
         .bind(&input.color)
         .bind(input.pinned)
@@ -1030,7 +1040,7 @@ mod tests {
         let text_note = repo
             .create_keep_note(&KeepNoteInput {
                 kind: KeepNoteKind::Text,
-                title: "Shopping".into(),
+                title: String::new(),
                 body: "Milk".into(),
                 items: Vec::new(),
                 color: "#fbbc04".into(),
@@ -1040,6 +1050,7 @@ mod tests {
             .await
             .unwrap();
         assert!(uuid::Uuid::parse_str(&text_note.id).is_ok());
+        assert_eq!(text_note.title, "Untitled");
         assert_eq!(text_note.kind, KeepNoteKind::Text);
         assert!(text_note.items.is_empty());
 
