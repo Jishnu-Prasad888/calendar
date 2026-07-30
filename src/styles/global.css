@@ -2208,18 +2208,19 @@ button:disabled {
   text-transform: uppercase;
 }
 .keep-grid {
-  columns: 220px 4;
-  column-gap: 13px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  align-items: start;
+  gap: 13px;
 }
 .keep-card {
   position: relative;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   width: 100%;
   min-height: 118px;
-  margin: 0 0 13px;
+  margin: 0;
   overflow: hidden;
-  break-inside: avoid;
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
   border-radius: 16px;
   box-shadow:
@@ -2585,6 +2586,6 @@ button:disabled {
     margin-bottom: 22px;
   }
   .keep-grid {
-    columns: 160px 2;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   }
 }
