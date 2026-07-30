@@ -8,6 +8,8 @@ import type {
   CalendarView,
   EventInput,
   EventPatch,
+  KeepNote,
+  KeepNoteInput,
   PreferenceInput,
   SyncState,
   TaskList,
@@ -15,6 +17,7 @@ import type {
 import { AppSidebar, type AppPage } from './components/AppSidebar';
 import { CalendarPage } from './components/CalendarPage';
 import { EventDialog, type EventDraft } from './components/EventDialog';
+import { KeepPage } from './components/KeepPage';
 import { SearchResults } from './components/SearchResults';
 import { SettingsPage } from './components/SettingsPage';
 import { TasksPage } from './components/TasksPage';
@@ -79,6 +82,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [taskLists, setTaskLists] = useState<readonly TaskList[]>([]);
+  const [keepNotes, setKeepNotes] = useState<KeepNote[]>([]);
   const [page, setPage] = useState<AppPage>('calendar');
   const [view, setView] = useState<CalendarView>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -90,6 +94,8 @@ export function App() {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [tasksError, setTasksError] = useState<string>();
+  const [keepLoading, setKeepLoading] = useState(true);
+  const [keepError, setKeepError] = useState<string>();
   const [fatalError, setFatalError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [searchQuery, setSearchQuery] = useState('');
@@ -97,6 +103,7 @@ export function App() {
   const eventRange = useRef<{ start: string; end: string } | undefined>(
     undefined,
   );
+  const keepRequested = useRef(false);
 
   useAppearance(snapshot?.preferences);
 
@@ -207,6 +214,21 @@ export function App() {
       )
       .finally(() => setTasksLoading(false));
   }, [page, taskLists.length]);
+
+  useEffect(() => {
+    if (page !== 'keep' || keepRequested.current) return;
+    keepRequested.current = true;
+    void ipc
+      .getKeepNotes()
+      .then((notes) => {
+        setKeepNotes(notes);
+        setKeepError(undefined);
+      })
+      .catch((reason: unknown) =>
+        setKeepError(errorMessage(reason, 'Could not load notes.')),
+      )
+      .finally(() => setKeepLoading(false));
+  }, [page]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -538,6 +560,24 @@ export function App() {
       .finally(() => setBusy(false));
   };
 
+  const createKeepNote = async (input: KeepNoteInput) => {
+    const created = await ipc.createKeepNote(input);
+    setKeepNotes((current) => [created, ...current]);
+  };
+
+  const updateKeepNote = async (noteId: string, input: KeepNoteInput) => {
+    const updated = await ipc.updateKeepNote(noteId, input);
+    setKeepNotes((current) => [
+      updated,
+      ...current.filter((note) => note.id !== noteId),
+    ]);
+  };
+
+  const deleteKeepNote = async (noteId: string) => {
+    await ipc.deleteKeepNote(noteId);
+    setKeepNotes((current) => current.filter((note) => note.id !== noteId));
+  };
+
   if (fatalError) {
     return (
       <main className="boot-state">
@@ -577,12 +617,16 @@ export function App() {
             ? titleForDate(currentDate, view)
             : page === 'tasks'
               ? 'Tasks'
-              : 'Settings'
+              : page === 'keep'
+                ? 'Notes'
+                : 'Settings'
         }
         view={view}
         account={snapshot.accounts.at(0)}
         syncState={snapshot.syncState}
         searchQuery={searchQuery}
+        calendarControls={page === 'calendar'}
+        searchLabel={page === 'keep' ? 'Search notes' : 'Search events'}
         onSearchChange={setSearchQuery}
         onMenu={() => setSidebarOpen((open) => !open)}
         onToday={() => {
@@ -646,6 +690,17 @@ export function App() {
             error={tasksError}
           />
         )}
+        {page === 'keep' && (
+          <KeepPage
+            notes={keepNotes}
+            loading={keepLoading}
+            error={keepError}
+            query={searchQuery}
+            onCreate={createKeepNote}
+            onUpdate={updateKeepNote}
+            onDelete={deleteKeepNote}
+          />
+        )}
         {page === 'settings' && (
           <SettingsPage
             preferences={snapshot.preferences}
@@ -661,7 +716,7 @@ export function App() {
           />
         )}
       </div>
-      {searchQuery.trim() && (
+      {page === 'calendar' && searchQuery.trim() && (
         <SearchResults
           query={searchQuery}
           events={events}

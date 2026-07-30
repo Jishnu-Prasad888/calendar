@@ -15,6 +15,8 @@ type TopBarProps = {
   account?: Account;
   syncState: SyncState;
   searchQuery: string;
+  calendarControls: boolean;
+  searchLabel: string;
   onSearchChange: (query: string) => void;
   onMenu: () => void;
   onToday: () => void;
@@ -37,6 +39,8 @@ export function TopBar({
   account,
   syncState,
   searchQuery,
+  calendarControls,
+  searchLabel,
   onSearchChange,
   onMenu,
   onToday,
@@ -60,56 +64,62 @@ export function TopBar({
       </div>
 
       <div className="date-controls">
-        <button className="soft-button" onClick={onToday}>
-          Today
-        </button>
-        <span className="button-pair">
-          <button
-            className="icon-button"
-            aria-label="Previous period"
-            onClick={() => onNavigate(-1)}
-          >
-            <ChevronLeft size={19} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Next period"
-            onClick={() => onNavigate(1)}
-          >
-            <ChevronRight size={19} />
-          </button>
-        </span>
+        {calendarControls && (
+          <>
+            <button className="soft-button" onClick={onToday}>
+              Today
+            </button>
+            <span className="button-pair">
+              <button
+                className="icon-button"
+                aria-label="Previous period"
+                onClick={() => onNavigate(-1)}
+              >
+                <ChevronLeft size={19} />
+              </button>
+              <button
+                className="icon-button"
+                aria-label="Next period"
+                onClick={() => onNavigate(1)}
+              >
+                <ChevronRight size={19} />
+              </button>
+            </span>
+          </>
+        )}
         <h1>{title}</h1>
       </div>
 
       <div className="topbar__tools">
         <label className="search-box">
           <Search size={17} />
-          <span className="sr-only">Search events</span>
+          <span className="sr-only">{searchLabel}</span>
           <input
             type="search"
-            placeholder="Search"
+            placeholder={searchLabel}
             value={searchQuery}
             onChange={(event) => onSearchChange(event.target.value)}
           />
           <kbd>/</kbd>
         </label>
-        <label className="view-select">
-          <span className="sr-only">Calendar view</span>
-          <select
-            value={view}
-            onChange={(event) =>
-              onViewChange(event.target.value as CalendarView)
-            }
-          >
-            {views.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={15} aria-hidden="true" />
-        </label>
+        {calendarControls && (
+          <label className="view-select">
+            <span className="sr-only">Calendar view</span>
+            <select
+              value={view}
+              onChange={(event) =>
+                onViewChange(event.target.value as CalendarView)
+              }
+            >
+              {views.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={15} aria-hidden="true" />
+          </label>
+        )}
         <span
           className="connection-indicator"
           title={syncState.status === 'offline' ? 'Offline' : 'Online'}

@@ -6,11 +6,12 @@ import {
   CloudOff,
   RotateCw,
   Settings,
+  StickyNote,
 } from 'lucide-react';
 import type { CalendarSource, SyncState } from '../domain';
 import { MiniCalendar } from './MiniCalendar';
 
-export type AppPage = 'calendar' | 'tasks' | 'settings';
+export type AppPage = 'calendar' | 'tasks' | 'keep' | 'settings';
 
 type AppSidebarProps = {
   page: AppPage;
@@ -61,6 +62,12 @@ export function AppSidebar({
         >
           <CheckSquare2 size={18} /> Tasks
           <span className="nav-readonly">View</span>
+        </button>
+        <button
+          data-active={page === 'keep'}
+          onClick={() => onPageChange('keep')}
+        >
+          <StickyNote size={18} /> Keep
         </button>
         <button
           data-active={page === 'settings'}

@@ -30,4 +30,22 @@ describe('App', () => {
       screen.queryByRole('button', { name: /Create task/i }),
     ).not.toBeInTheDocument();
   });
+
+  it('creates and edits local Keep-style notes', async () => {
+    render(<App />);
+    await screen.findByText('Clay Calendar');
+    fireEvent.click(screen.getByRole('button', { name: 'Keep' }));
+
+    expect(await screen.findByText('Welcome to Notes')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Take a note' }));
+    fireEvent.change(screen.getByLabelText('Note title'), {
+      target: { value: 'Release ideas' },
+    });
+    fireEvent.change(screen.getByLabelText('Note body'), {
+      target: { value: 'Add keyboard shortcuts' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Release ideas')).toBeInTheDocument();
+  });
 });
