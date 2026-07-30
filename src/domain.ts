@@ -132,10 +132,20 @@ export type TaskList = {
   tasks: readonly Task[];
 };
 
+export type KeepNoteKind = 'text' | 'checklist';
+
+export type KeepNoteItem = {
+  id: string;
+  text: string;
+  checked: boolean;
+};
+
 export type KeepNote = {
   id: string;
+  kind: KeepNoteKind;
   title: string;
   body: string;
+  items: readonly KeepNoteItem[];
   color: string;
   pinned: boolean;
   archived: boolean;
@@ -145,7 +155,7 @@ export type KeepNote = {
 
 export type KeepNoteInput = Pick<
   KeepNote,
-  'title' | 'body' | 'color' | 'pinned' | 'archived'
+  'kind' | 'title' | 'body' | 'items' | 'color' | 'pinned' | 'archived'
 >;
 
 export type PreferenceInput = Partial<Preferences>;

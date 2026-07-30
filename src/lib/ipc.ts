@@ -229,8 +229,10 @@ export function createDemoStore(today = new Date()): DemoStore {
     keepNotes: [
       {
         id: 'note-welcome',
+        kind: 'text',
         title: 'Welcome to Notes',
         body: 'Capture ideas here. Notes are stored locally on this device.',
+        items: [],
         color: '#fff8b8',
         pinned: true,
         archived: false,

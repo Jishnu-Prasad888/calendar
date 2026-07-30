@@ -59,8 +59,10 @@ describe('demo IPC client', () => {
       createDemoStore(new Date('2026-07-20T12:00:00Z')),
     );
     const input = {
+      kind: 'text' as const,
       title: 'Idea',
       body: 'Build it',
+      items: [],
       color: '#fff8b8',
       pinned: false,
       archived: false,
@@ -104,8 +106,10 @@ describe('demo IPC client', () => {
     });
 
     await client.updateKeepNote('note-1', {
+      kind: 'text',
       title: 'Updated',
       body: '',
+      items: [],
       color: '#fff8b8',
       pinned: false,
       archived: false,
@@ -113,8 +117,10 @@ describe('demo IPC client', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('update_keep_note', {
       noteId: 'note-1',
       input: {
+        kind: 'text',
         title: 'Updated',
         body: '',
+        items: [],
         color: '#fff8b8',
         pinned: false,
         archived: false,

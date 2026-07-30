@@ -5,8 +5,10 @@ import { KeepPage } from './KeepPage';
 
 const note: KeepNote = {
   id: 'note-1',
+  kind: 'text',
   title: 'Trip ideas',
   body: 'Take the night train',
+  items: [],
   color: '#fff8b8',
   pinned: false,
   archived: false,
@@ -51,8 +53,10 @@ describe('KeepPage', () => {
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
     expect(onCreate).toHaveBeenCalledWith({
+      kind: 'text',
       title: 'Packing list',
       body: 'Passport and charger',
+      items: [],
       color: '#a7ffeb',
       pinned: false,
       archived: false,
@@ -66,12 +70,48 @@ describe('KeepPage', () => {
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
     expect(onUpdate).toHaveBeenCalledWith('note-1', {
+      kind: 'text',
       title: 'Trip ideas',
       body: 'Take the night train',
+      items: [],
       color: '#fff8b8',
       pinned: false,
       archived: true,
     });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('creates a checklist with editable sub-items', async () => {
+    const { onCreate } = renderKeepPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New list' }));
+    expect(
+      screen.getByRole('dialog', { name: 'New list' }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Note title'), {
+      target: { value: 'Groceries' },
+    });
+    fireEvent.change(screen.getByLabelText('List item 1'), {
+      target: { value: 'Milk' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add item' }));
+    fireEvent.change(screen.getByLabelText('List item 2'), {
+      target: { value: 'Bread' },
+    });
+    fireEvent.click(screen.getByLabelText('Mark item 2 complete'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'checklist',
+        title: 'Groceries',
+        body: '',
+        items: [
+          expect.objectContaining({ text: 'Milk', checked: false }),
+          expect.objectContaining({ text: 'Bread', checked: true }),
+        ],
+      }),
+    );
   });
 });

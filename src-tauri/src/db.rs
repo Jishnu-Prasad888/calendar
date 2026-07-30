@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use chrono::Utc;
 use serde_json::Value;
@@ -11,7 +11,8 @@ use crate::{
     error::{AppError, AppResult},
     model::{
         Account, Calendar, CalendarEvent, DetailedSyncState, EventAvailability, EventPrivacy,
-        KeepNote, KeepNoteInput, Preferences, SyncState, Task, TaskList, is_css_color,
+        KeepNote, KeepNoteInput, KeepNoteItem, KeepNoteKind, Preferences, SyncState, Task,
+        TaskList, is_css_color,
     },
 };
 
@@ -74,6 +75,27 @@ struct TaskRow {
     due: Option<String>,
     completed: Option<String>,
     raw_json: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct KeepNoteRow {
+    id: String,
+    kind: String,
+    title: String,
+    body: String,
+    color: String,
+    pinned: bool,
+    archived: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct KeepNoteItemRow {
+    id: String,
+    note_id: String,
+    text: String,
+    checked: bool,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -430,20 +452,44 @@ impl Repository {
     }
 
     pub async fn keep_notes(&self) -> AppResult<Vec<KeepNote>> {
-        Ok(sqlx::query_as(
-            "SELECT id,title,body,color,pinned,archived,created_at,updated_at FROM keep_notes ORDER BY pinned DESC,updated_at DESC,id",
+        let rows: Vec<KeepNoteRow> = sqlx::query_as(
+            "SELECT id,kind,title,body,color,pinned,archived,created_at,updated_at FROM keep_notes ORDER BY pinned DESC,updated_at DESC,id",
         )
         .fetch_all(&self.pool)
-        .await?)
+        .await?;
+        let item_rows: Vec<KeepNoteItemRow> = sqlx::query_as(
+            "SELECT id,note_id,text,checked FROM keep_note_items ORDER BY note_id,position",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut items_by_note: HashMap<String, Vec<KeepNoteItem>> = HashMap::new();
+        for item in item_rows {
+            items_by_note
+                .entry(item.note_id)
+                .or_default()
+                .push(KeepNoteItem {
+                    id: item.id,
+                    text: item.text,
+                    checked: item.checked,
+                });
+        }
+        rows.into_iter()
+            .map(|row| {
+                let items = items_by_note.remove(&row.id).unwrap_or_default();
+                keep_note_from_row(row, items)
+            })
+            .collect()
     }
 
     pub async fn create_keep_note(&self, input: &KeepNoteInput) -> AppResult<KeepNote> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
+        let mut transaction = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO keep_notes(id,title,body,color,pinned,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO keep_notes(id,kind,title,body,color,pinned,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
         )
         .bind(&id)
+        .bind(input.kind.as_str())
         .bind(&input.title)
         .bind(&input.body)
         .bind(&input.color)
@@ -451,8 +497,21 @@ impl Repository {
         .bind(input.archived)
         .bind(&now)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
+        for (position, item) in input.items.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO keep_note_items(id,note_id,text,checked,position) VALUES(?,?,?,?,?)",
+            )
+            .bind(&item.id)
+            .bind(&id)
+            .bind(&item.text)
+            .bind(item.checked)
+            .bind(position as i64)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
         self.keep_note(&id).await
     }
 
@@ -461,9 +520,11 @@ impl Repository {
         note_id: &str,
         input: &KeepNoteInput,
     ) -> AppResult<KeepNote> {
+        let mut transaction = self.pool.begin().await?;
         let result = sqlx::query(
-            "UPDATE keep_notes SET title=?,body=?,color=?,pinned=?,archived=?,updated_at=? WHERE id=?",
+            "UPDATE keep_notes SET kind=?,title=?,body=?,color=?,pinned=?,archived=?,updated_at=? WHERE id=?",
         )
+        .bind(input.kind.as_str())
         .bind(&input.title)
         .bind(&input.body)
         .bind(&input.color)
@@ -471,33 +532,66 @@ impl Repository {
         .bind(input.archived)
         .bind(Utc::now().to_rfc3339())
         .bind(note_id)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("keep note {note_id}")));
         }
+        sqlx::query("DELETE FROM keep_note_items WHERE note_id=?")
+            .bind(note_id)
+            .execute(&mut *transaction)
+            .await?;
+        for (position, item) in input.items.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO keep_note_items(id,note_id,text,checked,position) VALUES(?,?,?,?,?)",
+            )
+            .bind(&item.id)
+            .bind(note_id)
+            .bind(&item.text)
+            .bind(item.checked)
+            .bind(position as i64)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
         self.keep_note(note_id).await
     }
 
     pub async fn delete_keep_note(&self, note_id: &str) -> AppResult<()> {
+        let mut transaction = self.pool.begin().await?;
         let result = sqlx::query("DELETE FROM keep_notes WHERE id=?")
             .bind(note_id)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("keep note {note_id}")));
         }
+        transaction.commit().await?;
         Ok(())
     }
 
     async fn keep_note(&self, note_id: &str) -> AppResult<KeepNote> {
-        sqlx::query_as(
-            "SELECT id,title,body,color,pinned,archived,created_at,updated_at FROM keep_notes WHERE id=?",
+        let row: KeepNoteRow = sqlx::query_as(
+            "SELECT id,kind,title,body,color,pinned,archived,created_at,updated_at FROM keep_notes WHERE id=?",
         )
         .bind(note_id)
         .fetch_optional(&self.pool)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("keep note {note_id}")))
+        .ok_or_else(|| AppError::NotFound(format!("keep note {note_id}")))?;
+        let items = sqlx::query_as::<_, KeepNoteItemRow>(
+            "SELECT id,note_id,text,checked FROM keep_note_items WHERE note_id=? ORDER BY position",
+        )
+        .bind(note_id)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|item| KeepNoteItem {
+            id: item.id,
+            text: item.text,
+            checked: item.checked,
+        })
+        .collect();
+        keep_note_from_row(row, items)
     }
 
     pub async fn sync_token(
@@ -767,6 +861,30 @@ fn valid_color(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn keep_note_from_row(row: KeepNoteRow, items: Vec<KeepNoteItem>) -> AppResult<KeepNote> {
+    let kind = match row.kind.as_str() {
+        "text" => KeepNoteKind::Text,
+        "checklist" => KeepNoteKind::Checklist,
+        value => {
+            return Err(AppError::Internal(format!(
+                "invalid keep note kind {value}"
+            )));
+        }
+    };
+    Ok(KeepNote {
+        id: row.id,
+        kind,
+        title: row.title,
+        body: row.body,
+        items,
+        color: row.color,
+        pinned: row.pinned,
+        archived: row.archived,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,37 +939,130 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keep_notes_migration_and_complete_crud() {
-        let repo = Repository::memory().await.unwrap();
-        let table_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='keep_notes')",
+    async fn keep_notes_migration_defaults_existing_notes_to_text() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!("../migrations/0002_keep_notes.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO keep_notes(id,title,body,color,pinned,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
         )
-        .fetch_one(&repo.pool)
+        .bind("existing")
+        .bind("Old note")
+        .bind("Body")
+        .bind("white")
+        .bind(false)
+        .bind(false)
+        .bind("2026-07-29T10:00:00Z")
+        .bind("2026-07-29T10:00:00Z")
+        .execute(&pool)
         .await
         .unwrap();
-        assert!(table_exists);
+        sqlx::raw_sql(include_str!("../migrations/0003_keep_note_checklists.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
 
-        let created = repo
+        let kind: String = sqlx::query_scalar("SELECT kind FROM keep_notes WHERE id='existing'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kind, "text");
+        let item_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='keep_note_items')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(item_table_exists);
+    }
+
+    #[tokio::test]
+    async fn keep_notes_round_trip_text_and_ordered_checklist_items() {
+        let repo = Repository::memory().await.unwrap();
+        let text_note = repo
             .create_keep_note(&KeepNoteInput {
+                kind: KeepNoteKind::Text,
                 title: "Shopping".into(),
                 body: "Milk".into(),
+                items: Vec::new(),
                 color: "#fbbc04".into(),
                 pinned: false,
                 archived: false,
             })
             .await
             .unwrap();
-        assert!(uuid::Uuid::parse_str(&created.id).is_ok());
+        assert!(uuid::Uuid::parse_str(&text_note.id).is_ok());
+        assert_eq!(text_note.kind, KeepNoteKind::Text);
+        assert!(text_note.items.is_empty());
+
+        let first_id = "00000000-0000-4000-8000-000000000001";
+        let second_id = "00000000-0000-4000-8000-000000000002";
+        let created = repo
+            .create_keep_note(&KeepNoteInput {
+                kind: KeepNoteKind::Checklist,
+                title: "Groceries".into(),
+                body: String::new(),
+                items: vec![
+                    crate::model::KeepNoteItemInput {
+                        id: first_id.into(),
+                        text: "Milk".into(),
+                        checked: false,
+                    },
+                    crate::model::KeepNoteItemInput {
+                        id: second_id.into(),
+                        text: "Bread".into(),
+                        checked: true,
+                    },
+                ],
+                color: "#fbbc04".into(),
+                pinned: false,
+                archived: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.kind, KeepNoteKind::Checklist);
+        assert_eq!(created.items[0].id, first_id);
+        assert!(!created.items[0].checked);
+        assert_eq!(created.items[1].id, second_id);
+        assert!(created.items[1].checked);
         assert!(chrono::DateTime::parse_from_rfc3339(&created.created_at).is_ok());
         assert!(chrono::DateTime::parse_from_rfc3339(&created.updated_at).is_ok());
-        assert_eq!(repo.keep_notes().await.unwrap().len(), 1);
+
+        let notes = repo.keep_notes().await.unwrap();
+        assert_eq!(notes.len(), 2);
+        let listed = notes.iter().find(|note| note.id == created.id).unwrap();
+        assert_eq!(listed.items[0].id, first_id);
+        assert_eq!(listed.items[1].id, second_id);
 
         let updated = repo
             .update_keep_note(
                 &created.id,
                 &KeepNoteInput {
+                    kind: KeepNoteKind::Checklist,
                     title: "Done".into(),
-                    body: "Milk and bread".into(),
+                    body: String::new(),
+                    items: vec![
+                        crate::model::KeepNoteItemInput {
+                            id: second_id.into(),
+                            text: "Bread".into(),
+                            checked: false,
+                        },
+                        crate::model::KeepNoteItemInput {
+                            id: first_id.into(),
+                            text: "Milk".into(),
+                            checked: true,
+                        },
+                    ],
                     color: "rgb(255, 0, 0)".into(),
                     pinned: true,
                     archived: true,
@@ -860,7 +1071,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.title, "Done");
-        assert_eq!(updated.body, "Milk and bread");
+        assert_eq!(updated.items[0].id, second_id);
+        assert!(!updated.items[0].checked);
+        assert_eq!(updated.items[1].id, first_id);
+        assert!(updated.items[1].checked);
         assert_eq!(updated.color, "rgb(255, 0, 0)");
         assert!(updated.pinned);
         assert!(updated.archived);
@@ -868,13 +1082,23 @@ mod tests {
         assert!(chrono::DateTime::parse_from_rfc3339(&updated.updated_at).is_ok());
 
         repo.delete_keep_note(&created.id).await.unwrap();
-        assert!(repo.keep_notes().await.unwrap().is_empty());
+        let item_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM keep_note_items WHERE note_id=?")
+                .bind(&created.id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(item_count, 0);
+        assert_eq!(repo.keep_notes().await.unwrap().len(), 1);
+        repo.delete_keep_note(&text_note.id).await.unwrap();
         assert!(matches!(
             repo.update_keep_note(
                 &created.id,
                 &KeepNoteInput {
+                    kind: KeepNoteKind::Text,
                     title: "Missing".into(),
                     body: String::new(),
+                    items: Vec::new(),
                     color: "red".into(),
                     pinned: false,
                     archived: false,

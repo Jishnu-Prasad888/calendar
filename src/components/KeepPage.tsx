@@ -2,12 +2,19 @@ import { useEffect, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
+  ListChecks,
   Pin,
+  Plus,
   StickyNote,
   Trash2,
   X,
 } from 'lucide-react';
-import type { KeepNote, KeepNoteInput } from '../domain';
+import type {
+  KeepNote,
+  KeepNoteInput,
+  KeepNoteItem,
+  KeepNoteKind,
+} from '../domain';
 import { eventTextColor } from '../lib/color';
 import { errorMessage } from '../lib/error';
 
@@ -40,18 +47,26 @@ const noteColors = [
 
 function noteInput(note: KeepNote): KeepNoteInput {
   return {
+    kind: note.kind,
     title: note.title,
     body: note.body,
+    items: note.items.map((item) => ({ ...item })),
     color: note.color,
     pinned: note.pinned,
     archived: note.archived,
   };
 }
 
-function newNoteInput(archived: boolean): KeepNoteInput {
+function newChecklistItem(): KeepNoteItem {
+  return { id: crypto.randomUUID(), text: '', checked: false };
+}
+
+function newNoteInput(archived: boolean, kind: KeepNoteKind): KeepNoteInput {
   return {
+    kind,
     title: '',
     body: '',
+    items: kind === 'checklist' ? [newChecklistItem()] : [],
     color: noteColors[1].value,
     pinned: false,
     archived,
@@ -94,10 +109,10 @@ export function KeepPage({
   const pinnedNotes = visibleNotes.filter((note) => note.pinned);
   const otherNotes = visibleNotes.filter((note) => !note.pinned);
 
-  const openEditor = (note?: KeepNote) => {
+  const openEditor = (note?: KeepNote, kind: KeepNoteKind = 'text') => {
     setEditor({
       note,
-      input: note ? noteInput(note) : newNoteInput(filter === 'archive'),
+      input: note ? noteInput(note) : newNoteInput(filter === 'archive', kind),
     });
     setEditorError(undefined);
   };
@@ -108,15 +123,44 @@ export function KeepPage({
     );
   };
 
+  const updateChecklistItem = (
+    itemId: string,
+    patch: Partial<KeepNoteItem>,
+  ) => {
+    setEditor((current) =>
+      current
+        ? {
+            ...current,
+            input: {
+              ...current.input,
+              items: current.input.items.map((item) =>
+                item.id === itemId ? { ...item, ...patch } : item,
+              ),
+            },
+          }
+        : current,
+    );
+  };
+
   const saveEditor = () => {
     if (!editor) return;
     const input = {
       ...editor.input,
       title: editor.input.title.trim(),
-      body: editor.input.body.trim(),
+      body: editor.input.kind === 'text' ? editor.input.body.trim() : '',
+      items:
+        editor.input.kind === 'checklist'
+          ? editor.input.items
+              .map((item) => ({ ...item, text: item.text.trim() }))
+              .filter((item) => item.text)
+          : [],
     };
-    if (!input.title && !input.body) {
-      setEditorError('Add a title or note before saving.');
+    if (!input.title && !input.body && input.items.length === 0) {
+      setEditorError(
+        input.kind === 'checklist'
+          ? 'Add a title or at least one list item before saving.'
+          : 'Add a title or note before saving.',
+      );
       return;
     }
     setBusy(true);
@@ -172,8 +216,34 @@ export function KeepPage({
               onClick={() => openEditor(note)}
             >
               {note.title && <strong>{note.title}</strong>}
-              {note.body && <p>{note.body}</p>}
+              {note.kind === 'text' && note.body && <p>{note.body}</p>}
             </button>
+            {note.kind === 'checklist' && (
+              <div className="keep-card__checklist">
+                {note.items.slice(0, 8).map((item) => (
+                  <label key={item.id} data-checked={item.checked}>
+                    <input
+                      type="checkbox"
+                      checked={item.checked}
+                      disabled={actionNoteId === note.id}
+                      onChange={() =>
+                        quickUpdate(note, {
+                          items: note.items.map((current) =>
+                            current.id === item.id
+                              ? { ...current, checked: !current.checked }
+                              : current,
+                          ),
+                        })
+                      }
+                    />
+                    <span>{item.text}</span>
+                  </label>
+                ))}
+                {note.items.length > 8 && (
+                  <small>+{note.items.length - 8} more</small>
+                )}
+              </div>
+            )}
             <div className="keep-card__actions">
               <button
                 type="button"
@@ -238,14 +308,23 @@ export function KeepPage({
         </nav>
       </header>
 
-      <button
-        type="button"
-        className="keep-take-note"
-        onClick={() => openEditor()}
-      >
-        <StickyNote size={20} />
-        <span>Take a note</span>
-      </button>
+      <div className="keep-create-bar">
+        <button
+          type="button"
+          className="keep-take-note"
+          onClick={() => openEditor(undefined, 'text')}
+        >
+          <StickyNote size={20} />
+          <span>Take a note</span>
+        </button>
+        <button
+          type="button"
+          className="keep-new-list"
+          onClick={() => openEditor(undefined, 'checklist')}
+        >
+          <ListChecks size={19} /> New list
+        </button>
+      </div>
 
       {Boolean(error ?? actionError) && (
         <p className="keep-error" role="alert">
@@ -306,7 +385,13 @@ export function KeepPage({
           >
             <header>
               <h2 id="keep-editor-title">
-                {editor.note ? 'Edit note' : 'New note'}
+                {editor.note
+                  ? editor.input.kind === 'checklist'
+                    ? 'Edit list'
+                    : 'Edit note'
+                  : editor.input.kind === 'checklist'
+                    ? 'New list'
+                    : 'New note'}
               </h2>
               <button
                 type="button"
@@ -337,18 +422,76 @@ export function KeepPage({
                   disabled={busy}
                 />
               </label>
-              <label>
-                <span className="sr-only">Note body</span>
-                <textarea
-                  value={editor.input.body}
-                  onChange={(event) =>
-                    updateEditor({ body: event.target.value })
-                  }
-                  placeholder="Take a note…"
-                  rows={8}
-                  disabled={busy}
-                />
-              </label>
+              {editor.input.kind === 'text' ? (
+                <label>
+                  <span className="sr-only">Note body</span>
+                  <textarea
+                    value={editor.input.body}
+                    onChange={(event) =>
+                      updateEditor({ body: event.target.value })
+                    }
+                    placeholder="Take a note…"
+                    rows={8}
+                    disabled={busy}
+                  />
+                </label>
+              ) : (
+                <div className="keep-checklist-editor">
+                  {editor.input.items.map((item, index) => (
+                    <div key={item.id}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Mark item ${String(index + 1)} complete`}
+                        checked={item.checked}
+                        onChange={(event) =>
+                          updateChecklistItem(item.id, {
+                            checked: event.target.checked,
+                          })
+                        }
+                        disabled={busy}
+                      />
+                      <input
+                        type="text"
+                        aria-label={`List item ${String(index + 1)}`}
+                        value={item.text}
+                        onChange={(event) =>
+                          updateChecklistItem(item.id, {
+                            text: event.target.value,
+                          })
+                        }
+                        placeholder="List item"
+                        disabled={busy}
+                      />
+                      <button
+                        type="button"
+                        aria-label={`Remove item ${String(index + 1)}`}
+                        onClick={() =>
+                          updateEditor({
+                            items: editor.input.items.filter(
+                              (current) => current.id !== item.id,
+                            ),
+                          })
+                        }
+                        disabled={busy}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="keep-checklist-editor__add"
+                    onClick={() =>
+                      updateEditor({
+                        items: [...editor.input.items, newChecklistItem()],
+                      })
+                    }
+                    disabled={busy}
+                  >
+                    <Plus size={15} /> Add item
+                  </button>
+                </div>
+              )}
               <fieldset className="keep-palette">
                 <legend>Note color</legend>
                 {noteColors.map((color) => (

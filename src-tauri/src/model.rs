@@ -228,12 +228,46 @@ pub struct TaskList {
     pub read_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum KeepNoteKind {
+    Text,
+    Checklist,
+}
+
+impl KeepNoteKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Checklist => "checklist",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepNoteItem {
+    pub id: String,
+    pub text: String,
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepNoteItemInput {
+    pub id: String,
+    pub text: String,
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeepNote {
     pub id: String,
+    pub kind: KeepNoteKind,
     pub title: String,
     pub body: String,
+    pub items: Vec<KeepNoteItem>,
     pub color: String,
     pub pinned: bool,
     pub archived: bool,
@@ -244,8 +278,10 @@ pub struct KeepNote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeepNoteInput {
+    pub kind: KeepNoteKind,
     pub title: String,
     pub body: String,
+    pub items: Vec<KeepNoteItemInput>,
     pub color: String,
     pub pinned: bool,
     pub archived: bool,
@@ -253,9 +289,6 @@ pub struct KeepNoteInput {
 
 impl KeepNoteInput {
     pub fn validate(&self) -> Result<(), String> {
-        if self.title.trim().is_empty() && self.body.trim().is_empty() {
-            return Err("title and body cannot both be blank".into());
-        }
         if self.title.chars().count() > 500 {
             return Err("title must be at most 500 characters".into());
         }
@@ -264,6 +297,42 @@ impl KeepNoteInput {
         }
         if self.color.len() > 64 || !is_css_color(&self.color) {
             return Err("color must be a valid CSS color of at most 64 bytes".into());
+        }
+        match self.kind {
+            KeepNoteKind::Text => {
+                if !self.items.is_empty() {
+                    return Err("text notes cannot have checklist items".into());
+                }
+                if self.title.trim().is_empty() && self.body.trim().is_empty() {
+                    return Err("title and body cannot both be blank".into());
+                }
+            }
+            KeepNoteKind::Checklist => {
+                if !self.body.trim().is_empty() {
+                    return Err("checklist note body must be blank".into());
+                }
+                if self.items.len() > 500 {
+                    return Err("checklist notes can have at most 500 items".into());
+                }
+                if self.title.trim().is_empty() && self.items.is_empty() {
+                    return Err("checklist notes must have a title or at least one item".into());
+                }
+
+                let mut ids = std::collections::HashSet::with_capacity(self.items.len());
+                for item in &self.items {
+                    let id = uuid::Uuid::parse_str(&item.id)
+                        .map_err(|_| "checklist item id must be a valid UUID")?;
+                    if !ids.insert(id) {
+                        return Err("checklist item ids must be unique".into());
+                    }
+                    if item.text.trim().is_empty() {
+                        return Err("checklist item text cannot be blank".into());
+                    }
+                    if item.text.chars().count() > 10_000 {
+                        return Err("checklist item text must be at most 10000 characters".into());
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -554,8 +623,10 @@ mod tests {
     #[test]
     fn keep_note_input_validates_content_color_and_lengths() {
         let valid = KeepNoteInput {
+            kind: KeepNoteKind::Text,
             title: "Shopping".into(),
             body: "Milk".into(),
+            items: Vec::new(),
             color: "#fbbc04".into(),
             pinned: false,
             archived: false,
@@ -582,6 +653,127 @@ mod tests {
             KeepNoteInput {
                 title: "x".repeat(501),
                 ..valid
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn keep_note_input_validates_checklist_shape_and_items() {
+        let item = KeepNoteItemInput {
+            id: "00000000-0000-4000-8000-000000000001".into(),
+            text: "Milk".into(),
+            checked: false,
+        };
+        let valid = KeepNoteInput {
+            kind: KeepNoteKind::Checklist,
+            title: String::new(),
+            body: String::new(),
+            items: vec![item.clone()],
+            color: "yellow".into(),
+            pinned: false,
+            archived: false,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(
+            KeepNoteInput {
+                title: "List".into(),
+                items: Vec::new(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            KeepNoteInput {
+                title: String::new(),
+                items: Vec::new(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                body: "checklist body".into(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                items: vec![KeepNoteItemInput {
+                    text: "  ".into(),
+                    ..item.clone()
+                }],
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                items: vec![KeepNoteItemInput {
+                    id: String::new(),
+                    ..item.clone()
+                }],
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                items: vec![item.clone(), item.clone()],
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                items: vec![KeepNoteItemInput {
+                    text: "x".repeat(10_001),
+                    ..item.clone()
+                }],
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                kind: KeepNoteKind::Text,
+                title: "Text".into(),
+                body: String::new(),
+                items: vec![item],
+                ..valid
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn keep_note_input_rejects_too_many_checklist_items() {
+        let items = (0..501)
+            .map(|index| KeepNoteItemInput {
+                id: uuid::Uuid::from_u128(index + 1).to_string(),
+                text: "Item".into(),
+                checked: false,
+            })
+            .collect();
+        assert!(
+            KeepNoteInput {
+                kind: KeepNoteKind::Checklist,
+                title: "Long list".into(),
+                body: String::new(),
+                items,
+                color: "white".into(),
+                pinned: false,
+                archived: false,
             }
             .validate()
             .is_err()
@@ -663,6 +855,38 @@ mod tests {
         .unwrap();
         assert_eq!(task["completed"], true);
         assert_eq!(task["updatedAt"], "2026-07-29T11:00:00Z");
+
+        let note = serde_json::to_value(KeepNote {
+            id: "note".into(),
+            kind: KeepNoteKind::Checklist,
+            title: "Shopping".into(),
+            body: String::new(),
+            items: vec![KeepNoteItem {
+                id: "item".into(),
+                text: "Milk".into(),
+                checked: true,
+            }],
+            color: "yellow".into(),
+            pinned: false,
+            archived: false,
+            created_at: "2026-07-29T10:00:00Z".into(),
+            updated_at: "2026-07-29T11:00:00Z".into(),
+        })
+        .unwrap();
+        assert_eq!(note["kind"], "checklist");
+        assert_eq!(note["items"][0]["checked"], true);
+        assert!(
+            serde_json::from_value::<KeepNoteInput>(serde_json::json!({
+                "kind": "unknown",
+                "title": "Invalid",
+                "body": "",
+                "items": [],
+                "color": "white",
+                "pinned": false,
+                "archived": false
+            }))
+            .is_err()
+        );
     }
 
     #[test]
