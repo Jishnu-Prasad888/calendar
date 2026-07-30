@@ -5,8 +5,8 @@ use crate::{
     AppState, desktop,
     error::{AppError, AppResult},
     model::{
-        Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, OAuthConfiguration,
-        Preferences, SyncState, SyncStatus, TaskList, event_time,
+        Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, KeepNote, KeepNoteInput,
+        OAuthConfiguration, Preferences, SyncState, SyncStatus, TaskList, event_time,
     },
 };
 
@@ -42,6 +42,35 @@ pub async fn get_events(
 #[tauri::command]
 pub async fn get_task_lists(state: State<'_, AppState>) -> AppResult<Vec<TaskList>> {
     state.repo.task_lists().await
+}
+
+#[tauri::command]
+pub async fn get_keep_notes(state: State<'_, AppState>) -> AppResult<Vec<KeepNote>> {
+    state.repo.keep_notes().await
+}
+
+#[tauri::command]
+pub async fn create_keep_note(
+    input: KeepNoteInput,
+    state: State<'_, AppState>,
+) -> AppResult<KeepNote> {
+    input.validate().map_err(AppError::Validation)?;
+    state.repo.create_keep_note(&input).await
+}
+
+#[tauri::command]
+pub async fn update_keep_note(
+    note_id: String,
+    input: KeepNoteInput,
+    state: State<'_, AppState>,
+) -> AppResult<KeepNote> {
+    input.validate().map_err(AppError::Validation)?;
+    state.repo.update_keep_note(&note_id, &input).await
+}
+
+#[tauri::command]
+pub async fn delete_keep_note(note_id: String, state: State<'_, AppState>) -> AppResult<()> {
+    state.repo.delete_keep_note(&note_id).await
 }
 
 #[tauri::command]

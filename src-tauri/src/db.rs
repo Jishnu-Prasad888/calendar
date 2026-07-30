@@ -11,7 +11,7 @@ use crate::{
     error::{AppError, AppResult},
     model::{
         Account, Calendar, CalendarEvent, DetailedSyncState, EventAvailability, EventPrivacy,
-        Preferences, SyncState, Task, TaskList, is_css_color,
+        KeepNote, KeepNoteInput, Preferences, SyncState, Task, TaskList, is_css_color,
     },
 };
 
@@ -429,6 +429,77 @@ impl Repository {
         Ok(result)
     }
 
+    pub async fn keep_notes(&self) -> AppResult<Vec<KeepNote>> {
+        Ok(sqlx::query_as(
+            "SELECT id,title,body,color,pinned,archived,created_at,updated_at FROM keep_notes ORDER BY pinned DESC,updated_at DESC,id",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn create_keep_note(&self, input: &KeepNoteInput) -> AppResult<KeepNote> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO keep_notes(id,title,body,color,pinned,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        )
+        .bind(&id)
+        .bind(&input.title)
+        .bind(&input.body)
+        .bind(&input.color)
+        .bind(input.pinned)
+        .bind(input.archived)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        self.keep_note(&id).await
+    }
+
+    pub async fn update_keep_note(
+        &self,
+        note_id: &str,
+        input: &KeepNoteInput,
+    ) -> AppResult<KeepNote> {
+        let result = sqlx::query(
+            "UPDATE keep_notes SET title=?,body=?,color=?,pinned=?,archived=?,updated_at=? WHERE id=?",
+        )
+        .bind(&input.title)
+        .bind(&input.body)
+        .bind(&input.color)
+        .bind(input.pinned)
+        .bind(input.archived)
+        .bind(Utc::now().to_rfc3339())
+        .bind(note_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("keep note {note_id}")));
+        }
+        self.keep_note(note_id).await
+    }
+
+    pub async fn delete_keep_note(&self, note_id: &str) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM keep_notes WHERE id=?")
+            .bind(note_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("keep note {note_id}")));
+        }
+        Ok(())
+    }
+
+    async fn keep_note(&self, note_id: &str) -> AppResult<KeepNote> {
+        sqlx::query_as(
+            "SELECT id,title,body,color,pinned,archived,created_at,updated_at FROM keep_notes WHERE id=?",
+        )
+        .bind(note_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("keep note {note_id}")))
+    }
+
     pub async fn sync_token(
         &self,
         account_id: &str,
@@ -747,5 +818,74 @@ mod tests {
         );
         repo.remove_account("sub").await.unwrap();
         assert!(repo.calendars().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn keep_notes_migration_and_complete_crud() {
+        let repo = Repository::memory().await.unwrap();
+        let table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='keep_notes')",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert!(table_exists);
+
+        let created = repo
+            .create_keep_note(&KeepNoteInput {
+                title: "Shopping".into(),
+                body: "Milk".into(),
+                color: "#fbbc04".into(),
+                pinned: false,
+                archived: false,
+            })
+            .await
+            .unwrap();
+        assert!(uuid::Uuid::parse_str(&created.id).is_ok());
+        assert!(chrono::DateTime::parse_from_rfc3339(&created.created_at).is_ok());
+        assert!(chrono::DateTime::parse_from_rfc3339(&created.updated_at).is_ok());
+        assert_eq!(repo.keep_notes().await.unwrap().len(), 1);
+
+        let updated = repo
+            .update_keep_note(
+                &created.id,
+                &KeepNoteInput {
+                    title: "Done".into(),
+                    body: "Milk and bread".into(),
+                    color: "rgb(255, 0, 0)".into(),
+                    pinned: true,
+                    archived: true,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.title, "Done");
+        assert_eq!(updated.body, "Milk and bread");
+        assert_eq!(updated.color, "rgb(255, 0, 0)");
+        assert!(updated.pinned);
+        assert!(updated.archived);
+        assert_eq!(updated.created_at, created.created_at);
+        assert!(chrono::DateTime::parse_from_rfc3339(&updated.updated_at).is_ok());
+
+        repo.delete_keep_note(&created.id).await.unwrap();
+        assert!(repo.keep_notes().await.unwrap().is_empty());
+        assert!(matches!(
+            repo.update_keep_note(
+                &created.id,
+                &KeepNoteInput {
+                    title: "Missing".into(),
+                    body: String::new(),
+                    color: "red".into(),
+                    pinned: false,
+                    archived: false,
+                }
+            )
+            .await,
+            Err(AppError::NotFound(_))
+        ));
+        assert!(matches!(
+            repo.delete_keep_note(&created.id).await,
+            Err(AppError::NotFound(_))
+        ));
     }
 }

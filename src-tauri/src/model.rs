@@ -228,6 +228,47 @@ pub struct TaskList {
     pub read_only: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepNote {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub color: String,
+    pub pinned: bool,
+    pub archived: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepNoteInput {
+    pub title: String,
+    pub body: String,
+    pub color: String,
+    pub pinned: bool,
+    pub archived: bool,
+}
+
+impl KeepNoteInput {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.title.trim().is_empty() && self.body.trim().is_empty() {
+            return Err("title and body cannot both be blank".into());
+        }
+        if self.title.chars().count() > 500 {
+            return Err("title must be at most 500 characters".into());
+        }
+        if self.body.chars().count() > 100_000 {
+            return Err("body must be at most 100000 characters".into());
+        }
+        if self.color.len() > 64 || !is_css_color(&self.color) {
+            return Err("color must be a valid CSS color of at most 64 bytes".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Preferences {
@@ -504,6 +545,43 @@ mod tests {
             Preferences {
                 google_client_id: "not-a-google-client".into(),
                 ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn keep_note_input_validates_content_color_and_lengths() {
+        let valid = KeepNoteInput {
+            title: "Shopping".into(),
+            body: "Milk".into(),
+            color: "#fbbc04".into(),
+            pinned: false,
+            archived: false,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(
+            KeepNoteInput {
+                title: "  ".into(),
+                body: "\n".into(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                color: "not a color".into(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            KeepNoteInput {
+                title: "x".repeat(501),
+                ..valid
             }
             .validate()
             .is_err()
