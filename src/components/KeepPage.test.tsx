@@ -196,4 +196,26 @@ describe('KeepPage', () => {
       }),
     );
   });
+
+  it('uses a non-text drag payload so item IDs are not inserted into fields', () => {
+    renderKeepPage([checklistNote]);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Project' }));
+    const setData = vi.fn();
+
+    fireEvent.dragStart(
+      screen.getByRole('button', {
+        name: 'Drag item 1 left or right to change nesting',
+      }),
+      {
+        clientX: 100,
+        dataTransfer: { effectAllowed: 'none', setData },
+      },
+    );
+
+    expect(setData).toHaveBeenCalledWith(
+      'application/x-clay-checklist-item',
+      'parent',
+    );
+    expect(screen.getByLabelText('List item 1')).toHaveValue('Build');
+  });
 });

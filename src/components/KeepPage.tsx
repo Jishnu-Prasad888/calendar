@@ -281,7 +281,10 @@ export function KeepPage({
           onDragStart={(event) => {
             draggedItem.current = { id: item.id, startX: event.clientX };
             event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', item.id);
+            event.dataTransfer.setData(
+              'application/x-clay-checklist-item',
+              item.id,
+            );
           }}
           onDragEnd={(event) => {
             const dragged = draggedItem.current;
@@ -648,7 +651,11 @@ export function KeepPage({
                   />
                 </label>
               ) : (
-                <div className="keep-checklist-editor">
+                <div
+                  className="keep-checklist-editor"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => event.preventDefault()}
+                >
                   {editor.input.items
                     .filter((item) => !item.checked)
                     .map(renderEditorItem)}
