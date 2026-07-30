@@ -11,10 +11,13 @@ A claymorphic Google Calendar desktop client built with Tauri, Rust, React, and 
 - Multiple Google accounts and calendars
 - Incremental bidirectional Calendar synchronization with an offline mutation queue
 - Read-only Google Tasks page
+- Keep-inspired local notes with editing, colors, pinning, and archiving
 - Native popup reminders, system tray operation, and optional launch at startup
 - Configurable local clay theme with light, dark, and system modes
 
 Calendar creation/sharing, Meet creation, attachments, free/busy assistance, appointment schedules, Workspace room discovery, and Tasks mutations are intentionally outside this project's scope.
+
+Notes are stored locally in SQLite and update immediately without polling. They do not sync with Google Keep: Google's official Keep API is limited to Workspace enterprise administration with domain-wide delegation and does not provide an update-note endpoint for a personal Keep-style client.
 
 ## Google Setup
 
