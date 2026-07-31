@@ -24,7 +24,7 @@ const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
-const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks.readonly";
+const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks";
 const KEYRING_SERVICE: &str = "app.claycalendar.desktop.google-oauth";
 const CLIENT_SECRET_KEY: &str = "oauth-client-secret";
 

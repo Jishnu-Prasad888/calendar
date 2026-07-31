@@ -19,16 +19,31 @@ describe('App', () => {
     expect(await screen.findByText('Architecture sync')).toBeInTheDocument();
   });
 
-  it('keeps tasks on a separate read-only page', async () => {
+  it('creates and completes tasks on a separate page', async () => {
     render(<App />);
     await screen.findByText('Clay Calendar');
     fireEvent.click(screen.getByRole('button', { name: /Tasks/ }));
 
     expect(await screen.findByText('Prepare launch notes')).toBeInTheDocument();
-    expect(screen.getByText('View only')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add task' })[0]);
+    fireEvent.change(screen.getByLabelText('Title'), {
+      target: { value: 'Publish release notes' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(
-      screen.queryByRole('button', { name: /Create task/i }),
-    ).not.toBeInTheDocument();
+      await screen.findByText('Publish release notes'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Mark complete: Publish release notes',
+      }),
+    );
+    expect(
+      await screen.findByRole('checkbox', {
+        name: 'Mark incomplete: Publish release notes',
+      }),
+    ).toBeChecked();
   });
 
   it('creates and edits local Keep-style notes', async () => {

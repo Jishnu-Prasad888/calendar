@@ -409,6 +409,87 @@ impl Repository {
         Ok(count)
     }
 
+    pub async fn account_for_task_list(&self, task_list_id: &str) -> AppResult<String> {
+        sqlx::query_scalar("SELECT account_id FROM task_lists WHERE id=? LIMIT 1")
+            .bind(task_list_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("task list {task_list_id}")))
+    }
+
+    pub async fn upsert_task(
+        &self,
+        account_id: &str,
+        task_list_id: &str,
+        raw: &Value,
+    ) -> AppResult<bool> {
+        let id = text(raw, "id")?;
+        let raw_json = raw.to_string();
+        let changed = sqlx::query_scalar::<_, String>(
+            "SELECT raw_json FROM tasks WHERE account_id=? AND task_list_id=? AND id=?",
+        )
+        .bind(account_id)
+        .bind(task_list_id)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .is_none_or(|old| old != raw_json);
+        sqlx::query(
+            "INSERT INTO tasks(account_id,task_list_id,id,title,notes,status,due,completed,position,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?) \
+             ON CONFLICT(account_id,task_list_id,id) DO UPDATE SET title=excluded.title,notes=excluded.notes,status=excluded.status,due=excluded.due,completed=excluded.completed,position=excluded.position,raw_json=excluded.raw_json",
+        )
+        .bind(account_id)
+        .bind(task_list_id)
+        .bind(id)
+        .bind(raw.get("title").and_then(Value::as_str).unwrap_or(""))
+        .bind(raw.get("notes").and_then(Value::as_str))
+        .bind(
+            raw.get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("needsAction"),
+        )
+        .bind(raw.get("due").and_then(Value::as_str))
+        .bind(raw.get("completed").and_then(Value::as_str))
+        .bind(raw.get("position").and_then(Value::as_str))
+        .bind(raw_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(changed)
+    }
+
+    pub async fn task(
+        &self,
+        account_id: &str,
+        task_list_id: &str,
+        task_id: &str,
+    ) -> AppResult<Task> {
+        let row: TaskRow = sqlx::query_as(
+            "SELECT id,title,notes,status,due,completed,raw_json FROM tasks WHERE account_id=? AND task_list_id=? AND id=?",
+        )
+        .bind(account_id)
+        .bind(task_list_id)
+        .bind(task_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("task {task_id}")))?;
+        task_from_row(row)
+    }
+
+    pub async fn delete_task_local(
+        &self,
+        account_id: &str,
+        task_list_id: &str,
+        task_id: &str,
+    ) -> AppResult<()> {
+        sqlx::query("DELETE FROM tasks WHERE account_id=? AND task_list_id=? AND id=?")
+            .bind(account_id)
+            .bind(task_list_id)
+            .bind(task_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn task_lists(&self) -> AppResult<Vec<TaskList>> {
         let lists: Vec<(String, String, String)> =
             sqlx::query_as("SELECT account_id,id,title FROM task_lists ORDER BY title")
@@ -423,30 +504,11 @@ impl Repository {
                 id,
                 account_id,
                 title,
-                read_only: true,
+                read_only: false,
                 tasks: rows
                     .into_iter()
-                    .map(|r| {
-                        let raw: Value = serde_json::from_str(&r.raw_json).unwrap_or_default();
-                        let updated_at = raw
-                            .get("updated")
-                            .and_then(Value::as_str)
-                            .or(r.completed.as_deref())
-                            .unwrap_or("1970-01-01T00:00:00Z")
-                            .to_owned();
-                        Task {
-                            id: r.id,
-                            title: r.title,
-                            notes: r.notes,
-                            completed: r.status == "completed" || r.completed.is_some(),
-                            completed_at: r.completed,
-                            status: r.status,
-                            due: r.due,
-                            updated_at,
-                            read_only: true,
-                        }
-                    })
-                    .collect(),
+                    .map(task_from_row)
+                    .collect::<AppResult<_>>()?,
             });
         }
         Ok(result)
@@ -869,6 +931,37 @@ fn event_from_row(row: EventRow) -> AppResult<CalendarEvent> {
     })
 }
 
+fn task_from_row(row: TaskRow) -> AppResult<Task> {
+    let raw: Value = serde_json::from_str(&row.raw_json)?;
+    let updated_at = raw
+        .get("updated")
+        .and_then(Value::as_str)
+        .or(row.completed.as_deref())
+        .unwrap_or("1970-01-01T00:00:00Z")
+        .to_owned();
+    Ok(Task {
+        id: row.id,
+        title: row.title,
+        notes: row.notes,
+        completed: row.status == "completed" || row.completed.is_some(),
+        completed_at: row.completed,
+        status: row.status,
+        due: row.due.as_deref().map(normalize_task_due),
+        updated_at,
+        read_only: false,
+    })
+}
+
+fn normalize_task_due(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|due| due.date_naive().format("%Y-%m-%d").to_string())
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map(|due| due.format("%Y-%m-%d").to_string())
+        })
+        .unwrap_or_else(|_| value.to_owned())
+}
+
 fn valid_color(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -954,6 +1047,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn google_task_response_round_trips_and_normalizes_due_date() {
+        let repo = Repository::memory().await.unwrap();
+        repo.upsert_account(&Account {
+            id: "sub".into(),
+            email: "test@example.com".into(),
+            display_name: "Test".into(),
+            avatar_url: None,
+            connected: true,
+        })
+        .await
+        .unwrap();
+        repo.replace_task_lists(
+            "sub",
+            &[(serde_json::json!({"id": "list", "title": "Tasks"}), vec![])],
+        )
+        .await
+        .unwrap();
+        assert_eq!(repo.account_for_task_list("list").await.unwrap(), "sub");
+
+        let response = serde_json::json!({
+            "id": "task",
+            "title": "Review",
+            "notes": "Details",
+            "status": "needsAction",
+            "due": "2026-08-01T00:00:00.000Z",
+            "position": "00000000000000000000",
+            "updated": "2026-07-31T12:00:00.000Z",
+            "unknown": {"preserved": true}
+        });
+        assert!(repo.upsert_task("sub", "list", &response).await.unwrap());
+        assert!(!repo.upsert_task("sub", "list", &response).await.unwrap());
+
+        let task = repo.task("sub", "list", "task").await.unwrap();
+        assert_eq!(task.due.as_deref(), Some("2026-08-01"));
+        assert_eq!(task.updated_at, "2026-07-31T12:00:00.000Z");
+        assert!(!task.read_only);
+        let stored: String = sqlx::query_scalar(
+            "SELECT raw_json FROM tasks WHERE account_id=? AND task_list_id=? AND id=?",
+        )
+        .bind("sub")
+        .bind("list")
+        .bind("task")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), response);
+
+        let lists = repo.task_lists().await.unwrap();
+        assert!(!lists[0].read_only);
+        assert_eq!(lists[0].tasks[0].due.as_deref(), Some("2026-08-01"));
+        repo.delete_task_local("sub", "list", "task").await.unwrap();
+        assert!(matches!(
+            repo.task("sub", "list", "task").await,
+            Err(AppError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn keep_notes_migrations_default_existing_kinds_and_item_indents() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1035,6 +1186,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keep_notes_are_ordered_by_pin_updated_at_and_id() {
+        let repo = Repository::memory().await.unwrap();
+        let input = |title: &str, pinned| KeepNoteInput {
+            kind: KeepNoteKind::Text,
+            title: title.into(),
+            body: String::new(),
+            items: Vec::new(),
+            color: "white".into(),
+            pinned,
+            archived: false,
+        };
+        let pinned = repo.create_keep_note(&input("Pinned", true)).await.unwrap();
+        let newer = repo.create_keep_note(&input("Newer", false)).await.unwrap();
+        let tied_a = repo
+            .create_keep_note(&input("Tied A", false))
+            .await
+            .unwrap();
+        let tied_b = repo
+            .create_keep_note(&input("Tied B", false))
+            .await
+            .unwrap();
+
+        for (id, updated_at) in [
+            (&pinned.id, "2026-01-01T00:00:00Z"),
+            (&newer.id, "2026-03-01T00:00:00Z"),
+            (&tied_a.id, "2026-02-01T00:00:00Z"),
+            (&tied_b.id, "2026-02-01T00:00:00Z"),
+        ] {
+            sqlx::query("UPDATE keep_notes SET updated_at=? WHERE id=?")
+                .bind(updated_at)
+                .bind(id)
+                .execute(&repo.pool)
+                .await
+                .unwrap();
+        }
+
+        let mut tied_ids = [&tied_a.id, &tied_b.id];
+        tied_ids.sort();
+        let notes = repo.keep_notes().await.unwrap();
+        assert_eq!(
+            notes.iter().map(|note| &note.id).collect::<Vec<_>>(),
+            vec![&pinned.id, &newer.id, tied_ids[0], tied_ids[1]]
+        );
+    }
+
+    #[tokio::test]
     async fn keep_notes_round_trip_text_and_ordered_checklist_hierarchy() {
         let repo = Repository::memory().await.unwrap();
         let text_note = repo
@@ -1098,6 +1295,12 @@ mod tests {
         assert_eq!(listed.items[1].id, second_id);
         assert_eq!(listed.items[1].indent, 1);
 
+        sqlx::query("UPDATE keep_notes SET updated_at='2000-01-01T00:00:00Z' WHERE id=?")
+            .bind(&created.id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+
         let updated = repo
             .update_keep_note(
                 &created.id,
@@ -1138,6 +1341,7 @@ mod tests {
         assert!(updated.archived);
         assert_eq!(updated.created_at, created.created_at);
         assert!(chrono::DateTime::parse_from_rfc3339(&updated.updated_at).is_ok());
+        assert_ne!(updated.updated_at, "2000-01-01T00:00:00Z");
 
         repo.delete_keep_note(&created.id).await.unwrap();
         let item_count: i64 =

@@ -126,6 +126,10 @@ export type Task = {
   updatedAt: string;
 };
 
+export type TaskInput = Pick<Task, 'title' | 'notes' | 'due' | 'completed'> & {
+  taskListId: string;
+};
+
 export type TaskList = {
   id: string;
   title: string;
@@ -165,6 +169,9 @@ export type IpcClient = {
   bootstrap: () => Promise<AppSnapshot>;
   getEvents: (rangeStart: string, rangeEnd: string) => Promise<CalendarEvent[]>;
   getTaskLists: () => Promise<readonly TaskList[]>;
+  createTask: (input: TaskInput) => Promise<Task>;
+  updateTask: (taskId: string, input: TaskInput) => Promise<Task>;
+  deleteTask: (taskId: string, taskListId: string) => Promise<void>;
   getKeepNotes: () => Promise<KeepNote[]>;
   createKeepNote: (input: KeepNoteInput) => Promise<KeepNote>;
   updateKeepNote: (noteId: string, input: KeepNoteInput) => Promise<KeepNote>;

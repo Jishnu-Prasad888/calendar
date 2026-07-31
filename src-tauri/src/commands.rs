@@ -1,12 +1,15 @@
+use reqwest::Method;
 use serde_json::{Map, Value};
 use tauri::{AppHandle, State};
 
 use crate::{
     AppState, desktop,
     error::{AppError, AppResult},
+    google::ApiError,
     model::{
         Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, KeepNote, KeepNoteInput,
-        OAuthConfiguration, Preferences, SyncState, SyncStatus, TaskList, event_time,
+        OAuthConfiguration, Preferences, SyncState, SyncStatus, Task, TaskInput, TaskList,
+        event_time,
     },
 };
 
@@ -42,6 +45,89 @@ pub async fn get_events(
 #[tauri::command]
 pub async fn get_task_lists(state: State<'_, AppState>) -> AppResult<Vec<TaskList>> {
     state.repo.task_lists().await
+}
+
+#[tauri::command]
+pub async fn create_task(input: TaskInput, state: State<'_, AppState>) -> AppResult<Task> {
+    input.validate().map_err(AppError::Validation)?;
+    let account_id = state
+        .repo
+        .account_for_task_list(&input.task_list_id)
+        .await?;
+    let body = input
+        .to_google_json(&chrono::Utc::now())
+        .map_err(AppError::Validation)?;
+    let url = crate::google::GoogleClient::tasks_url(&["lists", &input.task_list_id, "tasks"])?;
+    let task = state
+        .google
+        .send(&account_id, Method::POST, url, Some(&body), None)
+        .await
+        .map_err(google_error)?
+        .ok_or_else(|| AppError::Google("Google returned an empty task response".into()))?;
+    state
+        .repo
+        .upsert_task(&account_id, &input.task_list_id, &task)
+        .await?;
+    let task_id = google_resource_id(&task, "task")?;
+    state
+        .repo
+        .task(&account_id, &input.task_list_id, task_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn update_task(
+    task_id: String,
+    input: TaskInput,
+    state: State<'_, AppState>,
+) -> AppResult<Task> {
+    input.validate().map_err(AppError::Validation)?;
+    validate_resource_id(&task_id, "taskId")?;
+    let account_id = state
+        .repo
+        .account_for_task_list(&input.task_list_id)
+        .await?;
+    let body = input
+        .to_google_json(&chrono::Utc::now())
+        .map_err(AppError::Validation)?;
+    let url =
+        crate::google::GoogleClient::tasks_url(&["lists", &input.task_list_id, "tasks", &task_id])?;
+    let task = state
+        .google
+        .send(&account_id, Method::PATCH, url, Some(&body), None)
+        .await
+        .map_err(google_error)?
+        .ok_or_else(|| AppError::Google("Google returned an empty task response".into()))?;
+    state
+        .repo
+        .upsert_task(&account_id, &input.task_list_id, &task)
+        .await?;
+    let response_id = google_resource_id(&task, "task")?;
+    state
+        .repo
+        .task(&account_id, &input.task_list_id, response_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_task(
+    task_id: String,
+    task_list_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    validate_resource_id(&task_id, "taskId")?;
+    validate_resource_id(&task_list_id, "taskListId")?;
+    let account_id = state.repo.account_for_task_list(&task_list_id).await?;
+    let url = crate::google::GoogleClient::tasks_url(&["lists", &task_list_id, "tasks", &task_id])?;
+    state
+        .google
+        .send(&account_id, Method::DELETE, url, None, None)
+        .await
+        .map_err(google_error)?;
+    state
+        .repo
+        .delete_task_local(&account_id, &task_list_id, &task_id)
+        .await
 }
 
 #[tauri::command]
@@ -384,6 +470,29 @@ fn attendee_values(attendees: &[String]) -> Value {
             .map(|email| serde_json::json!({"email": email}))
             .collect(),
     )
+}
+
+fn validate_resource_id(value: &str, name: &str) -> AppResult<()> {
+    if value.trim().is_empty() {
+        Err(AppError::Validation(format!("{name} is required")))
+    } else {
+        Ok(())
+    }
+}
+
+fn google_resource_id<'a>(value: &'a Value, kind: &str) -> AppResult<&'a str> {
+    value
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::Validation(format!("Google {kind} missing id")))
+}
+
+fn google_error(error: ApiError) -> AppError {
+    if error.is_conflict() {
+        AppError::Conflict(error.to_string())
+    } else {
+        AppError::Google(error.to_string())
+    }
 }
 
 #[cfg(test)]

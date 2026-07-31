@@ -20,6 +20,7 @@ use tauri_plugin_autostart::ManagerExt;
 pub struct AppState {
     repo: Repository,
     auth: AuthService,
+    google: GoogleClient,
     sync: SyncEngine,
     preferences_lock: tokio::sync::Mutex<()>,
 }
@@ -60,10 +61,11 @@ pub fn run() {
                 });
             let auth = AuthService::new(&preferences.google_client_id, client_secret)?;
             let google = GoogleClient::new(auth.clone())?;
-            let sync = SyncEngine::new(repo.clone(), google, app.handle().clone());
+            let sync = SyncEngine::new(repo.clone(), google.clone(), app.handle().clone());
             app.manage(AppState {
                 repo: repo.clone(),
                 auth,
+                google,
                 sync: sync.clone(),
                 preferences_lock: tokio::sync::Mutex::new(()),
             });
@@ -107,6 +109,9 @@ pub fn run() {
             commands::bootstrap,
             commands::get_events,
             commands::get_task_lists,
+            commands::create_task,
+            commands::update_task,
+            commands::delete_task,
             commands::get_keep_notes,
             commands::create_keep_note,
             commands::update_keep_note,

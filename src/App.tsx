@@ -12,6 +12,8 @@ import type {
   KeepNoteInput,
   PreferenceInput,
   SyncState,
+  Task,
+  TaskInput,
   TaskList,
 } from './domain';
 import { AppSidebar, type AppPage } from './components/AppSidebar';
@@ -578,6 +580,50 @@ export function App() {
     setKeepNotes((current) => current.filter((note) => note.id !== noteId));
   };
 
+  const replaceTask = (taskListId: string, task: Task) => {
+    setTaskLists((current) =>
+      current.map((list) =>
+        list.id === taskListId
+          ? {
+              ...list,
+              tasks: list.tasks.map((item) =>
+                item.id === task.id ? task : item,
+              ),
+            }
+          : list,
+      ),
+    );
+  };
+
+  const createTask = async (input: TaskInput) => {
+    const created = await ipc.createTask(input);
+    setTaskLists((current) =>
+      current.map((list) =>
+        list.id === input.taskListId
+          ? { ...list, tasks: [...list.tasks, created] }
+          : list,
+      ),
+    );
+  };
+
+  const updateTask = async (taskId: string, input: TaskInput) => {
+    replaceTask(input.taskListId, await ipc.updateTask(taskId, input));
+  };
+
+  const deleteTask = async (taskId: string, taskListId: string) => {
+    await ipc.deleteTask(taskId, taskListId);
+    setTaskLists((current) =>
+      current.map((list) =>
+        list.id === taskListId
+          ? {
+              ...list,
+              tasks: list.tasks.filter((task) => task.id !== taskId),
+            }
+          : list,
+      ),
+    );
+  };
+
   if (fatalError) {
     return (
       <main className="boot-state">
@@ -688,6 +734,9 @@ export function App() {
             taskLists={taskLists}
             loading={tasksLoading}
             error={tasksError}
+            onCreate={createTask}
+            onUpdate={updateTask}
+            onDelete={deleteTask}
           />
         )}
         {page === 'keep' && (

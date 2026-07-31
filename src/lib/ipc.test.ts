@@ -54,6 +54,40 @@ describe('demo IPC client', () => {
     expect(preferences).toMatchObject({ theme: 'dark', weekStartsOn: 0 });
   });
 
+  it('creates, updates, and deletes tasks in memory', async () => {
+    const client = createDemoClient(
+      createDemoStore(new Date('2026-07-20T12:00:00Z')),
+    );
+    const created = await client.createTask({
+      taskListId: 'tasks-work',
+      title: 'Prepare agenda',
+      notes: 'Send before lunch',
+      due: '2026-07-21',
+      completed: false,
+    });
+    expect(created).toMatchObject({
+      title: 'Prepare agenda',
+      completed: false,
+    });
+
+    const updated = await client.updateTask(created.id, {
+      taskListId: 'tasks-work',
+      title: 'Prepare final agenda',
+      completed: true,
+    });
+    expect(updated).toMatchObject({
+      title: 'Prepare final agenda',
+      completed: true,
+    });
+
+    await client.deleteTask(created.id, 'tasks-work');
+    expect(
+      (await client.getTaskLists())
+        .find((list) => list.id === 'tasks-work')
+        ?.tasks.some((task) => task.id === created.id),
+    ).toBe(false);
+  });
+
   it('creates, updates, and deletes local notes', async () => {
     const client = createDemoClient(
       createDemoStore(new Date('2026-07-20T12:00:00Z')),
@@ -103,6 +137,22 @@ describe('demo IPC client', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('get_events', {
       rangeStart: '2026-07-20T00:00:00Z',
       rangeEnd: '2026-07-21T00:00:00Z',
+    });
+
+    const taskInput = {
+      taskListId: 'tasks-work',
+      title: 'Prepare agenda',
+      completed: false,
+    };
+    await client.updateTask('task-1', taskInput);
+    expect(invokeMock).toHaveBeenLastCalledWith('update_task', {
+      taskId: 'task-1',
+      input: taskInput,
+    });
+    await client.deleteTask('task-1', 'tasks-work');
+    expect(invokeMock).toHaveBeenLastCalledWith('delete_task', {
+      taskId: 'task-1',
+      taskListId: 'tasks-work',
     });
 
     await client.updateKeepNote('note-1', {

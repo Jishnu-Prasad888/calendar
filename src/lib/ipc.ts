@@ -13,6 +13,8 @@ import type {
   OAuthConfiguration,
   Preferences,
   SyncState,
+  Task,
+  TaskInput,
   TaskList,
 } from '../domain';
 import { addDays, dateKey, rangesOverlap } from './date';
@@ -276,6 +278,60 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
         )
         .map(copyEvent),
     getTaskLists: async () => structuredClone(store.taskLists),
+    createTask: async (input: TaskInput) => {
+      const list = store.taskLists.find((item) => item.id === input.taskListId);
+      if (!list) throw new Error('Task list was not found.');
+      const task: Task = {
+        id: `task-${String(store.nextId++)}`,
+        title: input.title,
+        notes: input.notes,
+        due: input.due,
+        completed: input.completed,
+        updatedAt: new Date().toISOString(),
+      };
+      store.taskLists = store.taskLists.map((item) =>
+        item.id === list.id ? { ...item, tasks: [...item.tasks, task] } : item,
+      );
+      return { ...task };
+    },
+    updateTask: async (taskId, input) => {
+      const list = store.taskLists.find((item) => item.id === input.taskListId);
+      const task = list?.tasks.find((item) => item.id === taskId);
+      if (!list || !task) throw new Error('Task was not found.');
+      const updated: Task = {
+        ...task,
+        title: input.title,
+        notes: input.notes,
+        due: input.due,
+        completed: input.completed,
+        updatedAt: new Date().toISOString(),
+      };
+      store.taskLists = store.taskLists.map((item) =>
+        item.id === list.id
+          ? {
+              ...item,
+              tasks: item.tasks.map((current) =>
+                current.id === taskId ? updated : current,
+              ),
+            }
+          : item,
+      );
+      return { ...updated };
+    },
+    deleteTask: async (taskId, taskListId) => {
+      const list = store.taskLists.find((item) => item.id === taskListId);
+      if (!list?.tasks.some((item) => item.id === taskId)) {
+        throw new Error('Task was not found.');
+      }
+      store.taskLists = store.taskLists.map((item) =>
+        item.id === taskListId
+          ? {
+              ...item,
+              tasks: item.tasks.filter((task) => task.id !== taskId),
+            }
+          : item,
+      );
+    },
     getKeepNotes: async () => structuredClone(store.keepNotes),
     createKeepNote: async (input: KeepNoteInput) => {
       const now = new Date().toISOString();
@@ -420,6 +476,11 @@ export function createTauriClient(): IpcClient {
     getEvents: (rangeStart, rangeEnd) =>
       invoke<CalendarEvent[]>('get_events', { rangeStart, rangeEnd }),
     getTaskLists: () => invoke<readonly TaskList[]>('get_task_lists'),
+    createTask: (input: TaskInput) => invoke<Task>('create_task', { input }),
+    updateTask: (taskId, input: TaskInput) =>
+      invoke<Task>('update_task', { taskId, input }),
+    deleteTask: (taskId, taskListId) =>
+      invoke('delete_task', { taskId, taskListId }).then(() => undefined),
     getKeepNotes: () => invoke<KeepNote[]>('get_keep_notes'),
     createKeepNote: (input) => invoke<KeepNote>('create_keep_note', { input }),
     updateKeepNote: (noteId, input) =>

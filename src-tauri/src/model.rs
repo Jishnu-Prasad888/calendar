@@ -220,6 +220,73 @@ pub struct Task {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskInput {
+    pub task_list_id: String,
+    pub title: String,
+    pub notes: Option<String>,
+    pub due: Option<String>,
+    pub completed: bool,
+}
+
+impl TaskInput {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.task_list_id.trim().is_empty() {
+            return Err("taskListId is required".into());
+        }
+        if self.title.trim().is_empty() {
+            return Err("title cannot be blank".into());
+        }
+        if self.title.chars().count() > 1_024 {
+            return Err("title must be at most 1024 characters".into());
+        }
+        if self
+            .notes
+            .as_ref()
+            .is_some_and(|notes| notes.chars().count() > 8_192)
+        {
+            return Err("notes must be at most 8192 characters".into());
+        }
+        if let Some(due) = &self.due {
+            parse_task_due(due)?;
+        }
+        Ok(())
+    }
+
+    pub fn to_google_json(
+        &self,
+        completed_at: &chrono::DateTime<chrono::Utc>,
+    ) -> Result<Value, String> {
+        let due = self
+            .due
+            .as_deref()
+            .map(parse_task_due)
+            .transpose()?
+            .map(|date| {
+                date.and_hms_opt(0, 0, 0)
+                    .expect("midnight is a valid time")
+                    .and_utc()
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            });
+        let (status, completed) = if self.completed {
+            (
+                "completed",
+                Value::String(completed_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            )
+        } else {
+            ("needsAction", Value::Null)
+        };
+        Ok(serde_json::json!({
+            "title": self.title,
+            "notes": self.notes,
+            "due": due,
+            "status": status,
+            "completed": completed,
+        }))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskList {
     pub id: String,
     pub account_id: String,
@@ -543,6 +610,17 @@ fn validate_range(start: &str, end: &str, all_day: bool) -> Result<(), String> {
     })
 }
 
+fn parse_task_due(value: &str) -> Result<chrono::NaiveDate, String> {
+    if value.len() != 10
+        || value.as_bytes().get(4) != Some(&b'-')
+        || value.as_bytes().get(7) != Some(&b'-')
+    {
+        return Err("due must be a valid YYYY-MM-DD date".into());
+    }
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| "due must be a valid YYYY-MM-DD date".into())
+}
+
 pub fn event_time(value: &str, all_day: bool) -> Value {
     if all_day {
         serde_json::json!({"date": value})
@@ -599,6 +677,101 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn task_input_validates_title_notes_and_due() {
+        let valid = TaskInput {
+            task_list_id: "list".into(),
+            title: "Review".into(),
+            notes: Some("Details".into()),
+            due: Some("2026-07-31".into()),
+            completed: false,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(
+            TaskInput {
+                title: " \n".into(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TaskInput {
+                title: "x".repeat(1_025),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TaskInput {
+                notes: Some("x".repeat(8_193)),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TaskInput {
+                due: Some("2026-02-30".into()),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TaskInput {
+                due: Some("2026-7-31".into()),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TaskInput {
+                task_list_id: " ".into(),
+                ..valid
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn task_requests_convert_dates_and_completion_state() {
+        let completed_at = chrono::DateTime::parse_from_rfc3339("2026-07-31T12:34:56Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let completed = TaskInput {
+            task_list_id: "list".into(),
+            title: "Review".into(),
+            notes: None,
+            due: Some("2026-08-01".into()),
+            completed: true,
+        }
+        .to_google_json(&completed_at)
+        .unwrap();
+        assert_eq!(completed["due"], "2026-08-01T00:00:00.000Z");
+        assert_eq!(completed["status"], "completed");
+        assert_eq!(completed["completed"], "2026-07-31T12:34:56.000Z");
+        assert!(completed["notes"].is_null());
+        assert!(completed.get("taskListId").is_none());
+
+        let reopened = TaskInput {
+            completed: false,
+            due: None,
+            ..serde_json::from_value(serde_json::json!({
+                "taskListId": "list", "title": "Review", "completed": true
+            }))
+            .unwrap()
+        }
+        .to_google_json(&completed_at)
+        .unwrap();
+        assert_eq!(reopened["status"], "needsAction");
+        assert!(reopened["completed"].is_null());
+        assert!(reopened["due"].is_null());
     }
 
     #[test]
@@ -896,7 +1069,7 @@ mod tests {
             completed: true,
             completed_at: Some("2026-07-29T10:00:00Z".into()),
             updated_at: "2026-07-29T11:00:00Z".into(),
-            read_only: true,
+            read_only: false,
         })
         .unwrap();
         assert_eq!(task["completed"], true);
