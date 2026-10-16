@@ -1,6 +1,6 @@
 [package]
 name = "clay-calendar"
-version = "0.1.0"
+version = "1.1.1"
 description = "A private Google Calendar desktop client"
 authors = ["Clay Calendar contributors"]
 edition = "2024"
