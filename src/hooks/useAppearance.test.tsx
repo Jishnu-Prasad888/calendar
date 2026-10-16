@@ -19,6 +19,9 @@ const preferences: Preferences = {
   showTasks: true,
   syncIntervalMinutes: 15,
   notificationsEnabled: true,
+  runInBackground: true,
+  surfaceTransparency: 30,
+  surfaceBlur: 12,
 };
 
 function AppearanceHarness({ value }: { value: Preferences }) {
@@ -43,6 +46,12 @@ describe('appearance', () => {
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe(
       '#cc5500',
     );
+    expect(
+      document.documentElement.style.getPropertyValue('--surface-opacity'),
+    ).toBe('70%');
+    expect(
+      document.documentElement.style.getPropertyValue('--surface-blur'),
+    ).toBe('12px');
     expect(
       JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? '{}'),
     ).toMatchObject({

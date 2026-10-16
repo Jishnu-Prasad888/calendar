@@ -25,6 +25,11 @@ import type {
   SyncState,
   ThemeMode,
 } from '../domain';
+import {
+  MAX_SURFACE_BLUR,
+  MAX_SURFACE_TRANSPARENCY,
+  applySurfaceEffects,
+} from '../hooks/useAppearance';
 
 type SettingsPageProps = {
   preferences: Preferences;
@@ -65,6 +70,65 @@ function CloudLink({ href, children }: { href: string; children: string }) {
     >
       {children} <ExternalLink size={13} />
     </button>
+  );
+}
+
+type SliderSettingProps = {
+  label: string;
+  description: string;
+  value: number;
+  max: number;
+  unit: string;
+  onPreview: (value: number) => void;
+  onCommit: (value: number) => void;
+};
+
+/** Previews while dragging and saves once the slider is released. */
+function SliderSetting({
+  label,
+  description,
+  value,
+  max,
+  unit,
+  onPreview,
+  onCommit,
+}: SliderSettingProps) {
+  const [draft, setDraft] = useState<number>();
+  const shown = draft ?? value;
+  const commit = () => {
+    if (draft === undefined) return;
+    setDraft(undefined);
+    if (draft !== value) onCommit(draft);
+  };
+  return (
+    <label className="setting-row slider-row">
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+      <span className="slider-control">
+        <input
+          aria-label={label}
+          type="range"
+          min="0"
+          max={max}
+          step="1"
+          value={shown}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            setDraft(next);
+            onPreview(next);
+          }}
+          onPointerUp={commit}
+          onKeyUp={commit}
+          onBlur={commit}
+        />
+        <output>
+          {shown}
+          {unit}
+        </output>
+      </span>
+    </label>
   );
 }
 
@@ -189,6 +253,28 @@ export function SettingsPage({
               <code>{preferences.accentColor}</code>
             </label>
           </div>
+          <SliderSetting
+            label="Transparency"
+            description="See through the app background, panels and dialogs."
+            value={preferences.surfaceTransparency}
+            max={MAX_SURFACE_TRANSPARENCY}
+            unit="%"
+            onPreview={(value) =>
+              applySurfaceEffects(value, preferences.surfaceBlur)
+            }
+            onCommit={(value) => onUpdate({ surfaceTransparency: value })}
+          />
+          <SliderSetting
+            label="Blur"
+            description="Soften whatever sits behind dialogs and translucent panels."
+            value={preferences.surfaceBlur}
+            max={MAX_SURFACE_BLUR}
+            unit="px"
+            onPreview={(value) =>
+              applySurfaceEffects(preferences.surfaceTransparency, value)
+            }
+            onCommit={(value) => onUpdate({ surfaceBlur: value })}
+          />
         </section>
 
         <section className="settings-card">
@@ -221,8 +307,8 @@ export function SettingsPage({
           </label>
           <label className="setting-row">
             <span>
-              <strong>Default view</strong>
-              <small>The first view shown at launch.</small>
+              <strong>Calendar view</strong>
+              <small>Remembers the last view you used between launches.</small>
             </span>
             <select
               value={preferences.defaultView}
@@ -249,6 +335,37 @@ export function SettingsPage({
               checked={preferences.autostart}
               onChange={(event) =>
                 onUpdate({ autostart: event.target.checked })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Run in background</strong>
+              <small>
+                Keep Clay Calendar in the system tray after closing the window,
+                so reminders still arrive.
+              </small>
+            </span>
+            <input
+              className="switch"
+              type="checkbox"
+              checked={preferences.runInBackground}
+              onChange={(event) =>
+                onUpdate({ runInBackground: event.target.checked })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Event notifications</strong>
+              <small>Show a desktop notification at each event reminder.</small>
+            </span>
+            <input
+              className="switch"
+              type="checkbox"
+              checked={preferences.notificationsEnabled}
+              onChange={(event) =>
+                onUpdate({ notificationsEnabled: event.target.checked })
               }
             />
           </label>

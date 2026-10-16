@@ -281,6 +281,26 @@ export function App() {
     setDialog({ key: `new-${String(Date.now())}`, draft });
   };
 
+  const openCreateFromTray = useEffectEvent(() => {
+    openCreate(newEventDraft(new Date()));
+  });
+
+  useEffect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    let active = true;
+    let stopListening: (() => void) | undefined;
+    void listen('tray://new-event', () => {
+      openCreateFromTray();
+    }).then((unlisten) => {
+      if (active) stopListening = unlisten;
+      else unlisten();
+    });
+    return () => {
+      active = false;
+      stopListening?.();
+    };
+  }, []);
+
   const openEvent = (event: CalendarEvent) => {
     setDialog({
       key: event.id,
@@ -469,6 +489,13 @@ export function App() {
         );
         setNotice(errorMessage(reason, 'Could not save settings.'));
       });
+  };
+
+  const changeView = (nextView: CalendarView) => {
+    setView(nextView);
+    if (snapshot && snapshot.preferences.defaultView !== nextView) {
+      updatePreferences({ defaultView: nextView });
+    }
   };
 
   const updateGoogleOAuthConfiguration = (
@@ -684,7 +711,7 @@ export function App() {
           setPage('calendar');
         }}
         onViewChange={(nextView) => {
-          setView(nextView);
+          changeView(nextView);
           setPage('calendar');
         }}
       />
@@ -722,7 +749,7 @@ export function App() {
             weekStartsOn={snapshot.preferences.weekStartsOn}
             loading={eventsLoading}
             onDateChange={setCurrentDate}
-            onViewChange={setView}
+            onViewChange={changeView}
             onRangeChange={loadEvents}
             onCreate={openCreate}
             onOpenEvent={openEvent}

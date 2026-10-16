@@ -130,6 +130,9 @@ describe('demo IPC client', () => {
       showTasks: true,
       syncIntervalMinutes: 15,
       notificationsEnabled: true,
+      runInBackground: true,
+      surfaceTransparency: 0,
+      surfaceBlur: 8,
     };
     invokeMock.mockResolvedValue(preferences);
 

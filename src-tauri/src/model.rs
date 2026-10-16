@@ -156,10 +156,8 @@ impl EventInput {
                     .collect(),
             );
         }
-        if !self.reminders.is_empty() {
-            event["reminders"] =
-                serde_json::json!({"useDefault": false, "overrides": self.reminders});
-        }
+        // Always send explicit reminders so "None" never falls back to calendar defaults.
+        event["reminders"] = serde_json::json!({"useDefault": false, "overrides": self.reminders});
         event
     }
 }
@@ -435,6 +433,9 @@ pub struct Preferences {
     pub show_tasks: bool,
     pub sync_interval_minutes: u32,
     pub notifications_enabled: bool,
+    pub run_in_background: bool,
+    pub surface_transparency: u8,
+    pub surface_blur: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -465,6 +466,9 @@ pub enum CalendarView {
     MultiDay,
 }
 
+pub const MAX_SURFACE_TRANSPARENCY: u8 = 80;
+pub const MAX_SURFACE_BLUR: u8 = 40;
+
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -482,6 +486,9 @@ impl Default for Preferences {
             show_tasks: true,
             sync_interval_minutes: 15,
             notifications_enabled: true,
+            run_in_background: true,
+            surface_transparency: 0,
+            surface_blur: 8,
         }
     }
 }
@@ -497,6 +504,14 @@ impl Preferences {
         }
         if !is_css_color(&self.surface_color) || !is_css_color(&self.accent_color) {
             return Err("surfaceColor and accentColor must be valid CSS colors".into());
+        }
+        if self.surface_transparency > MAX_SURFACE_TRANSPARENCY {
+            return Err(format!(
+                "surfaceTransparency must be at most {MAX_SURFACE_TRANSPARENCY}"
+            ));
+        }
+        if self.surface_blur > MAX_SURFACE_BLUR {
+            return Err(format!("surfaceBlur must be at most {MAX_SURFACE_BLUR}"));
         }
         if !(1..=1440).contains(&self.sync_interval_minutes) {
             return Err("syncIntervalMinutes must be between 1 and 1440".into());
@@ -794,6 +809,35 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn preferences_validate_surface_effect_bounds() {
+        let base = Preferences {
+            google_client_id: String::new(),
+            surface_transparency: MAX_SURFACE_TRANSPARENCY,
+            surface_blur: MAX_SURFACE_BLUR,
+            ..Default::default()
+        };
+        assert!(base.validate().is_ok());
+        assert!(
+            Preferences {
+                surface_transparency: MAX_SURFACE_TRANSPARENCY + 1,
+                ..base.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Preferences {
+                surface_blur: MAX_SURFACE_BLUR + 1,
+                ..base
+            }
+            .validate()
+            .is_err()
+        );
+        let legacy: Preferences = serde_json::from_str("{}").unwrap();
+        assert_eq!((legacy.surface_transparency, legacy.surface_blur), (0, 8));
     }
 
     #[test]
@@ -1126,6 +1170,10 @@ mod tests {
         assert_eq!(google["attendees"][0]["email"], "person@example.com");
         assert_eq!(google["visibility"], "private");
         assert_eq!(google["transparency"], "transparent");
+        assert_eq!(
+            google["reminders"],
+            serde_json::json!({"useDefault": false, "overrides": []})
+        );
 
         let patch: EventPatch = serde_json::from_value(serde_json::json!({
             "description": null

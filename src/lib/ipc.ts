@@ -93,6 +93,9 @@ export function createDemoStore(today = new Date()): DemoStore {
         showTasks: true,
         syncIntervalMinutes: 15,
         notificationsEnabled: true,
+        runInBackground: true,
+        surfaceTransparency: 0,
+        surfaceBlur: 8,
       },
       oauthConfiguration: {
         clientId: 'demo.apps.googleusercontent.com',

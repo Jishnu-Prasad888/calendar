@@ -33,6 +33,11 @@ export type Preferences = {
   showTasks: boolean;
   syncIntervalMinutes: number;
   notificationsEnabled: boolean;
+  runInBackground: boolean;
+  /** Percent of surface transparency, 0 (solid) to 80. */
+  surfaceTransparency: number;
+  /** Background blur radius in pixels, 0 to 40. */
+  surfaceBlur: number;
 };
 
 export type SyncState = {

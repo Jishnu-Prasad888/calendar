@@ -10,6 +10,15 @@ export function resolveTheme(
   return mode === 'system' ? (systemPrefersDark ? 'dark' : 'light') : mode;
 }
 
+export const MAX_SURFACE_TRANSPARENCY = 80;
+export const MAX_SURFACE_BLUR = 40;
+
+export function applySurfaceEffects(transparency: number, blur: number): void {
+  const style = document.documentElement.style;
+  style.setProperty('--surface-opacity', `${String(100 - transparency)}%`);
+  style.setProperty('--surface-blur', `${String(blur)}px`);
+}
+
 export function useAppearance(preferences: Preferences | undefined): void {
   useEffect(() => {
     if (!preferences) return;
@@ -26,6 +35,10 @@ export function useAppearance(preferences: Preferences | undefined): void {
       document.documentElement.style.setProperty(
         '--accent',
         preferences.accentColor,
+      );
+      applySurfaceEffects(
+        preferences.surfaceTransparency,
+        preferences.surfaceBlur,
       );
     };
 

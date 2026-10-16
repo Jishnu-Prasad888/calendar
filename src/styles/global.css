@@ -9,15 +9,15 @@
     'Segoe UI',
     sans-serif;
   color: #202938;
-  background: #edf1f7;
+  background: transparent;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --app-surface: #eef2f8;
   --accent: #1a73e8;
-  --bg: var(--app-surface);
-  --panel: color-mix(in srgb, var(--app-surface) 64%, white);
-  --panel-strong: color-mix(in srgb, var(--app-surface) 35%, white);
-  --panel-inset: color-mix(in srgb, var(--app-surface) 84%, #d8deea);
+  --bg-solid: var(--app-surface);
+  --panel-solid: color-mix(in srgb, var(--app-surface) 64%, white);
+  --panel-strong-solid: color-mix(in srgb, var(--app-surface) 35%, white);
+  --panel-inset-solid: color-mix(in srgb, var(--app-surface) 84%, #d8deea);
   --line: color-mix(in srgb, #738097 18%, transparent);
   --line-strong: color-mix(in srgb, #738097 32%, transparent);
   --text: #202938;
@@ -36,10 +36,10 @@
 }
 
 :root[data-theme='dark'] {
-  --bg: color-mix(in srgb, var(--app-surface) 13%, #10151d);
-  --panel: color-mix(in srgb, var(--app-surface) 16%, #161d27);
-  --panel-strong: color-mix(in srgb, var(--app-surface) 18%, #1b2430);
-  --panel-inset: color-mix(in srgb, var(--app-surface) 10%, #0f151d);
+  --bg-solid: color-mix(in srgb, var(--app-surface) 13%, #10151d);
+  --panel-solid: color-mix(in srgb, var(--app-surface) 16%, #161d27);
+  --panel-strong-solid: color-mix(in srgb, var(--app-surface) 18%, #1b2430);
+  --panel-inset-solid: color-mix(in srgb, var(--app-surface) 10%, #0f151d);
   --line: color-mix(in srgb, #a8b3c5 16%, transparent);
   --line-strong: color-mix(in srgb, #a8b3c5 28%, transparent);
   --text: #edf2f8;
@@ -52,6 +52,28 @@
   --shadow-inset:
     inset 2px 2px 5px rgb(4 8 13 / 35%), inset -2px -2px 5px rgb(70 82 99 / 18%);
   color-scheme: dark;
+}
+
+/* Surface effects: set from the Transparency and Blur sliders in Settings. */
+:root {
+  --surface-opacity: 100%;
+  --surface-blur: 8px;
+  --bg: color-mix(in srgb, var(--bg-solid) var(--surface-opacity), transparent);
+  --panel: color-mix(
+    in srgb,
+    var(--panel-solid) var(--surface-opacity),
+    transparent
+  );
+  --panel-strong: color-mix(
+    in srgb,
+    var(--panel-strong-solid) var(--surface-opacity),
+    transparent
+  );
+  --panel-inset: color-mix(
+    in srgb,
+    var(--panel-inset-solid) var(--surface-opacity),
+    transparent
+  );
 }
 
 * {
@@ -67,7 +89,7 @@ body,
 body {
   min-height: 100vh;
   overflow: hidden;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
 }
 button,
@@ -1064,6 +1086,7 @@ button:disabled {
   box-shadow:
     18px 24px 58px rgb(9 16 25 / 34%),
     inset 1px 1px 1px rgb(255 255 255 / 28%);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .task-editor > header {
   position: sticky;
@@ -1075,7 +1098,7 @@ button:disabled {
   padding: 14px 17px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .task-editor > header > div {
   display: grid;
@@ -1412,6 +1435,23 @@ button:disabled {
   background: var(--accent);
   transform: translateX(17px);
 }
+.setting-row > .slider-control {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+}
+.slider-control input {
+  width: 180px;
+  accent-color: var(--accent);
+}
+.slider-control output {
+  min-width: 42px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
 .polling-interval-control {
   display: flex !important;
   align-items: center;
@@ -1497,7 +1537,7 @@ button:disabled {
   display: grid;
   place-items: center;
   background: color-mix(in srgb, #101827 50%, transparent);
-  backdrop-filter: blur(7px);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .setup-guide-modal {
   display: grid;
@@ -1509,6 +1549,7 @@ button:disabled {
   border-radius: 22px;
   background: var(--panel-strong);
   box-shadow: 0 28px 80px rgb(15 23 42 / 34%);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .setup-guide-modal > header {
   display: flex;
@@ -1756,7 +1797,7 @@ button:disabled {
   place-items: center;
   padding: 20px;
   background: rgb(15 23 34 / 42%);
-  backdrop-filter: blur(5px);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .event-dialog {
   width: min(680px, calc(100vw - 48px));
@@ -1768,6 +1809,7 @@ button:disabled {
   box-shadow:
     18px 22px 50px rgb(9 16 25 / 30%),
     inset 1px 1px 1px rgb(255 255 255 / 30%);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .event-dialog > header {
   position: sticky;
@@ -1779,7 +1821,7 @@ button:disabled {
   padding: 14px 17px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .dialog-icon {
   display: grid;
@@ -2641,6 +2683,7 @@ button:disabled {
   box-shadow:
     18px 24px 58px rgb(9 16 25 / 34%),
     inset 1px 1px 1px rgb(255 255 255 / 28%);
+  backdrop-filter: blur(var(--surface-blur));
 }
 .keep-editor > header {
   display: flex;

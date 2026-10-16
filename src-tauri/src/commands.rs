@@ -342,6 +342,7 @@ pub async fn update_preferences(
     } else {
         state.repo.set_preferences(&input).await?;
     }
+    desktop::set_run_in_background(&app, input.run_in_background);
     state.auth.set_client_id(&input.google_client_id).await?;
     Ok(input)
 }

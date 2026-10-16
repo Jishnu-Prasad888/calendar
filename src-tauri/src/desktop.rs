@@ -1,11 +1,32 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::{
-    App, AppHandle, Manager,
-    menu::{Menu, MenuItem},
+    App, AppHandle, Emitter, Manager,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::{AppError, AppResult};
+
+const TRAY_ID: &str = "main";
+pub const NEW_EVENT_EVENT: &str = "tray://new-event";
+
+static RUN_IN_BACKGROUND: AtomicBool = AtomicBool::new(true);
+
+pub fn runs_in_background() -> bool {
+    RUN_IN_BACKGROUND.load(Ordering::Relaxed)
+}
+
+/// Keeps the process alive in the system tray after the window closes, or quits on close.
+pub fn set_run_in_background(app: &AppHandle, enabled: bool) {
+    RUN_IN_BACKGROUND.store(enabled, Ordering::Relaxed);
+    if let Some(tray) = app.tray_by_id(TRAY_ID)
+        && let Err(error) = tray.set_visible(enabled)
+    {
+        eprintln!("could not update the tray icon visibility: {error}");
+    }
+}
 
 pub fn is_background_launch() -> bool {
     std::env::args_os().any(|argument| argument == "--background")
@@ -20,14 +41,22 @@ pub fn show_main_window(app: &AppHandle) {
 }
 
 pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
+    let new_event = MenuItem::with_id(app, "new-event", "New event", true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open Clay Calendar", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
-    let mut tray = TrayIconBuilder::new()
+    let menu = Menu::with_items(app, &[&new_event, &open, &separator, &quit])?;
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Clay Calendar")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "new-event" => {
+                show_main_window(app);
+                if let Err(error) = app.emit_to("main", NEW_EVENT_EVENT, ()) {
+                    eprintln!("could not open the new event dialog: {error}");
+                }
+            }
             "open" => show_main_window(app),
             "quit" => app.exit(0),
             _ => {}

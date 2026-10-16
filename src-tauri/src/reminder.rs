@@ -130,7 +130,10 @@ where
 
 fn popup_minutes(event: &Value, calendar: &Value) -> Vec<i64> {
     let reminders = event.get("reminders").unwrap_or(&Value::Null);
-    let values = if reminders.get("useDefault").and_then(Value::as_bool) == Some(true) {
+    // Google treats an event without reminder settings as using the calendar defaults.
+    let values = if reminders.is_null()
+        || reminders.get("useDefault").and_then(Value::as_bool) == Some(true)
+    {
         calendar.get("defaultReminders")
     } else {
         reminders.get("overrides")
@@ -244,6 +247,14 @@ mod tests {
                 &calendar
             ),
             vec![30]
+        );
+        assert_eq!(popup_minutes(&serde_json::json!({}), &calendar), vec![30]);
+        assert!(
+            popup_minutes(
+                &serde_json::json!({"reminders": {"useDefault": false, "overrides": []}}),
+                &calendar
+            )
+            .is_empty()
         );
     }
 

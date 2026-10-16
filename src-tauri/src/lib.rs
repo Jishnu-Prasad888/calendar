@@ -42,8 +42,12 @@ pub fn run() {
             if window.label() == "main"
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
-                api.prevent_close();
-                let _ = window.hide();
+                if desktop::runs_in_background() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    window.app_handle().exit(0);
+                }
             }
         })
         .setup(|app| {
@@ -54,6 +58,7 @@ pub fn run() {
                 &data_dir.join("calendar.sqlite3"),
             ))?;
             let preferences = tauri::async_runtime::block_on(repo.preferences())?;
+            desktop::set_run_in_background(app.handle(), preferences.run_in_background);
             let client_secret = tauri::async_runtime::block_on(AuthService::stored_client_secret())
                 .unwrap_or_else(|error| {
                     eprintln!("could not load Google OAuth client secret: {error}");
@@ -100,7 +105,7 @@ pub fn run() {
                     }
                 }
             });
-            if !desktop::is_background_launch() {
+            if !(desktop::is_background_launch() && preferences.run_in_background) {
                 desktop::show_main_window(app.handle());
             }
             Ok(())
