@@ -248,6 +248,8 @@ export function CalendarPage({
         slotMaxTime="24:00:00"
         scrollTime="00:00:00"
         slotDuration="00:30:00"
+        slotEventOverlap={false}
+        eventMinHeight={20}
         allDaySlot
         events={visibleEvents.map((event) => ({
           id: event.id,
