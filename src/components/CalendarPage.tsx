@@ -201,19 +201,29 @@ export function CalendarPage({
   const handleDates = (argument: DatesSetArg) => {
     onRangeChange(argument.start, argument.end);
   };
-  const renderEvent = (argument: EventContentArg) => (
-    <span
-      className="calendar-event"
-      data-pending={Boolean(argument.event.extendedProps.pending)}
-    >
-      <i aria-hidden="true" />
-      <b>{argument.timeText}</b>
-      <span>{argument.event.title}</span>
-      {argument.event.extendedProps.readOnly === true && (
-        <LockKeyhole size={11} aria-label="Read-only" />
-      )}
-    </span>
-  );
+  const renderEvent = (argument: EventContentArg) => {
+    const { start, end, allDay } = argument.event;
+    // Events of 30 minutes or less are too short for a wrapped time/title
+    // layout, so they render on a single clipped line instead.
+    const compact =
+      !allDay &&
+      start !== null &&
+      (end === null || end.getTime() - start.getTime() <= 30 * 60_000);
+    return (
+      <span
+        className="calendar-event"
+        data-pending={Boolean(argument.event.extendedProps.pending)}
+        data-compact={compact}
+      >
+        <i aria-hidden="true" />
+        <b>{argument.timeText}</b>
+        <span>{argument.event.title}</span>
+        {argument.event.extendedProps.readOnly === true && (
+          <LockKeyhole size={11} aria-label="Read-only" />
+        )}
+      </span>
+    );
+  };
 
   return (
     <main className="calendar-surface">

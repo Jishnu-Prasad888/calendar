@@ -756,6 +756,40 @@ button:disabled {
 .fc-timegrid-event .calendar-event span {
   flex-basis: 90%;
 }
+.fc-timegrid-event .fc-event-main {
+  overflow: hidden;
+}
+.fc-timegrid-event .calendar-event svg {
+  flex: none;
+}
+/* Short events: one clipped line, title first; the time shrinks away before
+   the title does when overlapping events leave the box narrow. */
+.fc-timegrid-event .calendar-event[data-compact='true'] {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+  padding: 0 2px;
+  font-size: 0.62rem;
+  line-height: 1.15;
+}
+.fc-timegrid-event .calendar-event[data-compact='true'] i {
+  display: none;
+}
+.fc-timegrid-event .calendar-event[data-compact='true'] span {
+  order: -1;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.fc-timegrid-event .calendar-event[data-compact='true'] b {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  opacity: 0.8;
+  white-space: nowrap;
+  text-overflow: clip;
+}
 .fc .fc-timegrid-slot {
   height: 2.25em;
 }
