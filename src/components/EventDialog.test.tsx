@@ -112,4 +112,76 @@ describe('EventDialog', () => {
       }),
     );
   });
+
+  it('saves several reminders', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EventDialog
+        draft={draft}
+        calendars={[calendar]}
+        busy={false}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+        onRespond={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Add title'), {
+      target: { value: 'Planning' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add reminder' }));
+    fireEvent.change(screen.getByLabelText('Reminder 2 time'), {
+      target: { value: '1440' },
+    });
+    fireEvent.change(screen.getByLabelText('Reminder 2 type'), {
+      target: { value: 'email' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add reminder' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove reminder 3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reminders: [
+          { method: 'popup', minutes: 10 },
+          { method: 'email', minutes: 1440 },
+        ],
+      }),
+    );
+  });
+
+  it('adds Google Meet to a new event', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <EventDialog
+        draft={draft}
+        calendars={[calendar]}
+        busy={false}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+        onRespond={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Add title'), {
+      target: { value: 'Planning' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Add Google Meet video conferencing',
+      }),
+    );
+    expect(
+      screen.getByText('A Google Meet link is created when you save.'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ googleMeet: true }),
+    );
+  });
 });

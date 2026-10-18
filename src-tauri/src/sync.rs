@@ -396,13 +396,17 @@ impl SyncEngine {
     }
 
     async fn apply_mutation(&self, mutation: &PendingMutation) -> Result<(), ApiError> {
-        let url = GoogleClient::calendar_url(&[
+        let mut url = GoogleClient::calendar_url(&[
             "calendars",
             &mutation.calendar_id,
             "events",
             &mutation.event_id,
         ])
         .map_err(internal_api_error)?;
+        // Without this flag Google ignores conferenceData, so Meet links are
+        // neither created nor removed.
+        url.query_pairs_mut()
+            .append_pair("conferenceDataVersion", "1");
         let payload = mutation
             .payload_json
             .as_deref()
@@ -411,9 +415,11 @@ impl SyncEngine {
             .map_err(|error| internal_api_error(AppError::Json(error)))?;
         let (method, body) = match mutation.operation.as_str() {
             "create" => {
-                let url =
+                let mut url =
                     GoogleClient::calendar_url(&["calendars", &mutation.calendar_id, "events"])
                         .map_err(internal_api_error)?;
+                url.query_pairs_mut()
+                    .append_pair("conferenceDataVersion", "1");
                 let result = self
                     .google
                     .send(

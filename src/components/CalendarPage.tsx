@@ -16,6 +16,7 @@ import { LockKeyhole } from 'lucide-react';
 import type { CalendarEvent, CalendarView, EventPatch } from '../domain';
 import { eventTextColor } from '../lib/color';
 import { addDays, dateKey, datesInMonth } from '../lib/date';
+import type { DialogAnchor } from './EventDialog';
 
 type Selection = {
   start: string;
@@ -33,8 +34,8 @@ type CalendarPageProps = {
   onDateChange: (date: Date) => void;
   onViewChange: (view: CalendarView) => void;
   onRangeChange: (start: Date, end: Date) => void;
-  onCreate: (selection: Selection) => void;
-  onOpenEvent: (event: CalendarEvent) => void;
+  onCreate: (selection: Selection, anchor?: DialogAnchor) => void;
+  onOpenEvent: (event: CalendarEvent, anchor?: DialogAnchor) => void;
   onMoveEvent: (event: CalendarEvent, patch: EventPatch) => Promise<boolean>;
 };
 
@@ -58,6 +59,34 @@ function eventPatchFromChange(event: EventDropArg['event']): EventPatch {
         event.startStr),
     allDay: event.allDay,
   };
+}
+
+function rectAnchor(rect: DOMRect): DialogAnchor {
+  return {
+    top: rect.top,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+/** Anchors to the selected day column, at the height the pointer let go. */
+function selectionAnchor(pointer: MouseEvent | null): DialogAnchor | undefined {
+  if (!pointer) return undefined;
+  const target = pointer.target instanceof Element ? pointer.target : null;
+  const cell = target?.closest('.fc-timegrid-col, .fc-daygrid-day');
+  if (!cell) {
+    return { top: pointer.clientY, left: pointer.clientX, width: 0, height: 0 };
+  }
+  const rect = cell.getBoundingClientRect();
+  return cell.classList.contains('fc-timegrid-col')
+    ? {
+        top: pointer.clientY - 20,
+        left: rect.left,
+        width: rect.width,
+        height: 0,
+      }
+    : rectAnchor(rect);
 }
 
 function YearView({
@@ -189,14 +218,19 @@ export function CalendarPage({
   };
   const handleEventClick = (argument: EventClickArg) => {
     const source = events.find((event) => event.id === argument.event.id);
-    if (source) onOpenEvent(source);
+    if (source) {
+      onOpenEvent(source, rectAnchor(argument.el.getBoundingClientRect()));
+    }
   };
   const handleSelect = (argument: DateSelectArg) => {
-    onCreate({
-      start: argument.startStr,
-      end: argument.endStr,
-      allDay: argument.allDay,
-    });
+    onCreate(
+      {
+        start: argument.startStr,
+        end: argument.endStr,
+        allDay: argument.allDay,
+      },
+      selectionAnchor(argument.jsEvent),
+    );
   };
   const handleDates = (argument: DatesSetArg) => {
     onRangeChange(argument.start, argument.end);

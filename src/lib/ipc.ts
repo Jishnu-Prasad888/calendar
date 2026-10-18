@@ -249,6 +249,18 @@ export function createDemoStore(today = new Date()): DemoStore {
   };
 }
 
+function demoMeet(
+  enabled: boolean,
+  seed: number,
+): Pick<CalendarEvent, 'googleMeet' | 'meetLink'> {
+  return enabled
+    ? {
+        googleMeet: true,
+        meetLink: `https://meet.google.com/demo-${String(seed)}`,
+      }
+    : { googleMeet: false, meetLink: undefined };
+}
+
 function copyEvent(event: CalendarEvent): CalendarEvent {
   return {
     ...event,
@@ -413,6 +425,7 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
           responseStatus: 'needsAction',
         })),
         reminders: input.reminders ?? [],
+        ...demoMeet(input.googleMeet === true, store.nextId),
         pending: false,
         etag: `demo-${String(store.nextId)}`,
       };
@@ -421,7 +434,7 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
     },
     updateEvent: async (eventId, calendarId, patch) => {
       const event = findWritableEvent(store, eventId, calendarId);
-      const { description, location, ...changes } = patch;
+      const { description, location, googleMeet, ...changes } = patch;
       const attendees = patch.attendees?.map((email) => ({
         email,
         responseStatus:
@@ -429,6 +442,7 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
             ?.responseStatus ?? ('needsAction' as const),
       }));
       Object.assign(event, changes, {
+        ...(googleMeet === undefined ? {} : demoMeet(googleMeet, store.nextId)),
         attendees: attendees ?? event.attendees,
         etag: `demo-${String(store.nextId++)}`,
       });

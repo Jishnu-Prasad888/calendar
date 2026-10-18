@@ -1,6 +1,12 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, CalendarRange, RefreshCw, X } from 'lucide-react';
+import {
+  AlertCircle,
+  CalendarPlus,
+  CalendarRange,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import type {
   AppSnapshot,
   AttendeeResponse,
@@ -18,7 +24,11 @@ import type {
 } from './domain';
 import { AppSidebar, type AppPage } from './components/AppSidebar';
 import { CalendarPage } from './components/CalendarPage';
-import { EventDialog, type EventDraft } from './components/EventDialog';
+import {
+  EventDialog,
+  type DialogAnchor,
+  type EventDraft,
+} from './components/EventDialog';
 import { KeepPage } from './components/KeepPage';
 import { SearchResults } from './components/SearchResults';
 import { SettingsPage } from './components/SettingsPage';
@@ -27,12 +37,14 @@ import { TopBar } from './components/TopBar';
 import { useAppearance } from './hooks/useAppearance';
 import { addDays, dateKey } from './lib/date';
 import { errorMessage } from './lib/error';
+import { isIcsFile, parseIcs } from './lib/ics';
 import { ipc } from './lib/ipc';
 
 type OpenDialog = {
   key: string;
   event?: CalendarEvent;
   draft: EventDraft;
+  anchor?: DialogAnchor;
 };
 
 function titleForDate(date: Date, view: CalendarView): string {
@@ -102,6 +114,7 @@ export function App() {
   const [notice, setNotice] = useState<string>();
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [fileDragActive, setFileDragActive] = useState(false);
   const eventRange = useRef<{ start: string; end: string } | undefined>(
     undefined,
   );
@@ -276,9 +289,12 @@ export function App() {
       .finally(() => setEventsLoading(false));
   };
 
-  const openCreate = (draft = newEventDraft(currentDate)) => {
+  const openCreate = (
+    draft = newEventDraft(currentDate),
+    anchor?: DialogAnchor,
+  ) => {
     setPage('calendar');
-    setDialog({ key: `new-${String(Date.now())}`, draft });
+    setDialog({ key: `new-${String(Date.now())}`, draft, anchor });
   };
 
   const openCreateFromTray = useEffectEvent(() => {
@@ -301,11 +317,12 @@ export function App() {
     };
   }, []);
 
-  const openEvent = (event: CalendarEvent) => {
+  const openEvent = (event: CalendarEvent, anchor?: DialogAnchor) => {
     setDialog({
       key: event.id,
       event,
       draft: { start: event.start, end: event.end, allDay: event.allDay },
+      anchor,
     });
   };
 
@@ -325,6 +342,11 @@ export function App() {
           recurrence: input.recurrence,
           privacy: input.privacy,
           availability: input.availability,
+          // Only send a change, so saving never replaces an existing meeting.
+          googleMeet:
+            input.googleMeet === Boolean(dialog.event.googleMeet)
+              ? undefined
+              : input.googleMeet,
         };
         const updated = await ipc.updateEvent(
           dialog.event.id,
@@ -343,6 +365,108 @@ export function App() {
       setBusy(false);
     }
   };
+
+  const importIcsFiles = useEffectEvent(async (files: readonly File[]) => {
+    const calendars = snapshot?.calendars.filter((item) => !item.readOnly);
+    const calendar =
+      calendars?.find((item) => item.primary) ?? calendars?.at(0);
+    if (!calendar) {
+      setNotice(
+        'Connect a Google account with an editable calendar to import events.',
+      );
+      return;
+    }
+    const icsFiles = files.filter(isIcsFile);
+    if (icsFiles.length === 0) {
+      setNotice('Drop an .ics calendar file to import its events.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const parsed = (
+        await Promise.all(
+          icsFiles.map(async (file) => parseIcs(await file.text())),
+        )
+      ).flat();
+      if (parsed.length === 0) {
+        setNotice('No events were found in that file.');
+        return;
+      }
+      const created: CalendarEvent[] = [];
+      let failed = 0;
+      for (const event of parsed) {
+        try {
+          created.push(
+            await ipc.createEvent({ ...event, calendarId: calendar.id }),
+          );
+        } catch {
+          failed += 1;
+        }
+      }
+      setEvents((current) => [...current, ...created]);
+      const first = created.at(0);
+      if (first) {
+        setPage('calendar');
+        setCurrentDate(
+          new Date(first.allDay ? `${first.start}T12:00:00` : first.start),
+        );
+      }
+      const added = `${String(created.length)} event${created.length === 1 ? '' : 's'}`;
+      setNotice(
+        failed > 0
+          ? `Added ${added} to ${calendar.name}; ${String(failed)} could not be imported.`
+          : created.length === 1 && first
+            ? `Added “${first.title}” to ${calendar.name}.`
+            : `Added ${added} to ${calendar.name}.`,
+      );
+    } catch (reason) {
+      setNotice(errorMessage(reason, 'Could not read the calendar file.'));
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  useEffect(() => {
+    // Only external file drags count; in-app drags (such as checklist items)
+    // carry their own data types.
+    const carriesFiles = (event: DragEvent) =>
+      event.dataTransfer?.types.includes('Files') === true;
+    let depth = 0;
+    const handleEnter = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      setFileDragActive(true);
+    };
+    const handleOver = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    };
+    const handleLeave = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setFileDragActive(false);
+    };
+    const handleDrop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setFileDragActive(false);
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length > 0) void importIcsFiles(files);
+    };
+    window.addEventListener('dragenter', handleEnter);
+    window.addEventListener('dragover', handleOver);
+    window.addEventListener('dragleave', handleLeave);
+    window.addEventListener('drop', handleDrop);
+    return () => {
+      window.removeEventListener('dragenter', handleEnter);
+      window.removeEventListener('dragover', handleOver);
+      window.removeEventListener('dragleave', handleLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, []);
 
   const deleteEvent = async (event: CalendarEvent) => {
     setBusy(true);
@@ -808,6 +932,7 @@ export function App() {
           key={dialog.key}
           event={dialog.event}
           draft={dialog.draft}
+          anchor={dialog.anchor}
           calendars={snapshot.calendars}
           busy={busy}
           onClose={() => setDialog(undefined)}
@@ -815,6 +940,15 @@ export function App() {
           onDelete={deleteEvent}
           onRespond={respondToEvent}
         />
+      )}
+      {fileDragActive && (
+        <div className="file-drop-overlay" aria-hidden="true">
+          <div>
+            <CalendarPlus size={34} />
+            <strong>Drop to add events</strong>
+            <span>.ics calendar files are added to your primary calendar</span>
+          </div>
+        </div>
       )}
       {notice && (
         <div className="toast" role="status">

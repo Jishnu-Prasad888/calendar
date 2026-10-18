@@ -12,7 +12,7 @@ use crate::{
     model::{
         Account, Calendar, CalendarEvent, DetailedSyncState, EventAvailability, EventPrivacy,
         KeepNote, KeepNoteInput, KeepNoteItem, KeepNoteKind, Preferences, SyncState, Task,
-        TaskList, is_css_color,
+        TaskList, google_meet_link, has_google_meet, is_css_color,
     },
 };
 
@@ -926,6 +926,8 @@ fn event_from_row(row: EventRow) -> AppResult<CalendarEvent> {
         } else {
             EventAvailability::Busy
         },
+        google_meet: has_google_meet(&raw),
+        meet_link: google_meet_link(&raw),
         etag: row.etag,
         pending: row.pending != 0,
     })

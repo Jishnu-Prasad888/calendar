@@ -1,13 +1,17 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   AlignLeft,
+  Bell,
   CalendarDays,
   Clock3,
   LockKeyhole,
   MapPin,
+  Plus,
   Repeat2,
   Trash2,
   UserRoundPlus,
+  Video,
   X,
 } from 'lucide-react';
 import type {
@@ -17,6 +21,7 @@ import type {
   EventAvailability,
   EventInput,
   EventPrivacy,
+  EventReminder,
 } from '../domain';
 import {
   addDays,
@@ -33,9 +38,18 @@ export type EventDraft = {
   allDay: boolean;
 };
 
+/** Viewport rectangle of whatever was clicked to open the dialog. */
+export type DialogAnchor = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
 type EventDialogProps = {
   event?: CalendarEvent;
   draft: EventDraft;
+  anchor?: DialogAnchor;
   calendars: readonly CalendarSource[];
   busy: boolean;
   onClose: () => void;
@@ -61,9 +75,54 @@ const recurrenceOptions = [
   ['RRULE:FREQ=YEARLY', 'Yearly'],
 ] as const;
 
+// Google Calendar accepts at most five reminder overrides per event.
+const MAX_REMINDERS = 5;
+
+const reminderPresets = [0, 5, 10, 15, 30, 60, 120, 1440, 2880, 10080];
+
+function reminderLabel(minutes: number): string {
+  if (minutes === 0) return 'At start time';
+  const units = [
+    [10080, 'week'],
+    [1440, 'day'],
+    [60, 'hour'],
+    [1, 'minute'],
+  ] as const;
+  const [size, unit] =
+    units.find(([unitSize]) => minutes % unitSize === 0) ?? units[3];
+  const count = minutes / size;
+  return `${String(count)} ${unit}${count === 1 ? '' : 's'} before`;
+}
+
+const ANCHOR_GAP = 12;
+const VIEWPORT_MARGIN = 16;
+
+/** Places the dialog beside the anchor, on whichever side has room. */
+function anchoredPosition(
+  anchor: DialogAnchor,
+  width: number,
+  height: number,
+): { top: number; left: number } {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const rightSpace =
+    viewportWidth - (anchor.left + anchor.width) - ANCHOR_GAP - VIEWPORT_MARGIN;
+  const leftSpace = anchor.left - ANCHOR_GAP - VIEWPORT_MARGIN;
+  let left: number;
+  if (rightSpace >= width) left = anchor.left + anchor.width + ANCHOR_GAP;
+  else if (leftSpace >= width) left = anchor.left - ANCHOR_GAP - width;
+  else left = anchor.left + anchor.width / 2 - width / 2;
+  const maxLeft = viewportWidth - VIEWPORT_MARGIN - width;
+  left = Math.max(VIEWPORT_MARGIN, Math.min(left, maxLeft));
+  const maxTop = viewportHeight - VIEWPORT_MARGIN - height;
+  const top = Math.max(VIEWPORT_MARGIN, Math.min(anchor.top, maxTop));
+  return { top, left };
+}
+
 export function EventDialog({
   event,
   draft,
+  anchor,
   calendars,
   busy,
   onClose,
@@ -90,8 +149,10 @@ export function EventDialog({
   const [attendees, setAttendees] = useState(
     event?.attendees.map((item) => item.email).join(', ') ?? '',
   );
-  const [reminder, setReminder] = useState(
-    String(event?.reminders[0]?.minutes ?? 10),
+  const [reminders, setReminders] = useState<EventReminder[]>(() =>
+    event
+      ? event.reminders.map((reminder) => ({ ...reminder }))
+      : [{ method: 'popup', minutes: 10 }],
   );
   const [recurrence, setRecurrence] = useState(event?.recurrence?.[0] ?? '');
   const [privacy, setPrivacy] = useState<EventPrivacy>(
@@ -100,10 +161,38 @@ export function EventDialog({
   const [availability, setAvailability] = useState<EventAvailability>(
     event?.availability ?? 'busy',
   );
+  const [googleMeet, setGoogleMeet] = useState(event?.googleMeet ?? false);
   const [openDatePicker, setOpenDatePicker] = useState<'start' | 'end'>();
   const [error, setError] = useState<string>();
+  const dialogRef = useRef<HTMLElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number }>();
   const readOnly = event?.readOnly === true;
   const selfAttendee = event?.attendees.find((attendee) => attendee.self);
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!anchor || !dialog) return;
+    const place = () => {
+      const { offsetWidth, offsetHeight } = dialog;
+      setPosition(anchoredPosition(anchor, offsetWidth, offsetHeight));
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(dialog);
+    window.addEventListener('resize', place);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', place);
+    };
+  }, [anchor]);
+
+  const updateReminder = (index: number, change: Partial<EventReminder>) => {
+    setReminders((current) =>
+      current.map((reminder, position) =>
+        position === index ? { ...reminder, ...change } : reminder,
+      ),
+    );
+  };
 
   const handleAllDayChange = (checked: boolean) => {
     if (checked && !allDay) {
@@ -150,13 +239,18 @@ export function EventDialog({
         .split(',')
         .map((email) => email.trim())
         .filter(Boolean),
-      reminders:
-        reminder === '0'
-          ? []
-          : [{ method: 'popup', minutes: Number(reminder) }],
+      reminders: reminders.filter(
+        (reminder, index) =>
+          reminders.findIndex(
+            (other) =>
+              other.method === reminder.method &&
+              other.minutes === reminder.minutes,
+          ) === index,
+      ),
       recurrence: recurrence ? [recurrence] : undefined,
       privacy,
       availability,
+      googleMeet,
     };
     void onSave(input).catch((reason: unknown) => {
       setError(errorMessage(reason, 'Could not save the event.'));
@@ -166,13 +260,18 @@ export function EventDialog({
   return (
     <div
       className="dialog-backdrop"
+      data-anchored={Boolean(anchor)}
       role="presentation"
       onMouseDown={(click) => {
         if (click.target === click.currentTarget) onClose();
       }}
     >
       <section
+        ref={dialogRef}
         className="event-dialog"
+        data-anchored={Boolean(anchor)}
+        data-placed={!anchor || Boolean(position)}
+        style={position}
         role="dialog"
         aria-modal="true"
         aria-labelledby="event-dialog-title"
@@ -279,6 +378,54 @@ export function EventDialog({
               ))}
             </select>
           </label>
+          {(googleMeet || !readOnly) && (
+            <div className="field-row meet-row">
+              <Video size={18} />
+              {!googleMeet ? (
+                <button
+                  type="button"
+                  className="meet-row__add"
+                  onClick={() => setGoogleMeet(true)}
+                >
+                  Add Google Meet video conferencing
+                </button>
+              ) : (
+                <div className="meet-row__details">
+                  {event?.meetLink ? (
+                    <>
+                      <button
+                        type="button"
+                        className="primary-button meet-row__join"
+                        onClick={() => {
+                          if (event.meetLink) void openUrl(event.meetLink);
+                        }}
+                      >
+                        Join with Google Meet
+                      </button>
+                      <small>{event.meetLink.replace('https://', '')}</small>
+                    </>
+                  ) : (
+                    <small>
+                      {event?.googleMeet
+                        ? 'Google is creating the Meet link…'
+                        : 'A Google Meet link is created when you save.'}
+                    </small>
+                  )}
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label="Remove Google Meet"
+                      title="Remove Google Meet"
+                      onClick={() => setGoogleMeet(false)}
+                    >
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <label className="field-row">
             <MapPin size={18} />
             <span className="sr-only">Location</span>
@@ -326,21 +473,88 @@ export function EventDialog({
             </select>
           </label>
 
+          <div className="field-row reminder-list">
+            <Bell size={18} />
+            <div>
+              {reminders.length === 0 && (
+                <span className="reminder-list__empty">No reminders</span>
+              )}
+              {reminders.map((reminder, index) => {
+                const presets = reminderPresets.includes(reminder.minutes)
+                  ? reminderPresets
+                  : [...reminderPresets, reminder.minutes].sort(
+                      (first, second) => first - second,
+                    );
+                return (
+                  <div className="reminder-list__item" key={index}>
+                    <select
+                      aria-label={`Reminder ${String(index + 1)} time`}
+                      value={reminder.minutes}
+                      onChange={(change) =>
+                        updateReminder(index, {
+                          minutes: Number(change.target.value),
+                        })
+                      }
+                      disabled={readOnly}
+                    >
+                      {presets.map((minutes) => (
+                        <option value={minutes} key={minutes}>
+                          {reminderLabel(minutes)}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`Reminder ${String(index + 1)} type`}
+                      value={reminder.method}
+                      onChange={(change) =>
+                        updateReminder(index, {
+                          method: change.target
+                            .value as EventReminder['method'],
+                        })
+                      }
+                      disabled={readOnly}
+                    >
+                      <option value="popup">Notification</option>
+                      <option value="email">Email</option>
+                    </select>
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={`Remove reminder ${String(index + 1)}`}
+                        onClick={() =>
+                          setReminders((current) =>
+                            current.filter((_, position) => position !== index),
+                          )
+                        }
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {!readOnly && reminders.length < MAX_REMINDERS && (
+                <button
+                  type="button"
+                  className="reminder-list__add"
+                  onClick={() =>
+                    setReminders((current) => [
+                      ...current,
+                      {
+                        method: 'popup',
+                        minutes: current.length === 0 ? 10 : 30,
+                      },
+                    ])
+                  }
+                >
+                  <Plus size={14} /> Add reminder
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="dialog-options">
-            <label>
-              Reminder
-              <select
-                value={reminder}
-                onChange={(change) => setReminder(change.target.value)}
-                disabled={readOnly}
-              >
-                <option value="0">None</option>
-                <option value="10">10 minutes before</option>
-                <option value="30">30 minutes before</option>
-                <option value="60">1 hour before</option>
-                <option value="1440">1 day before</option>
-              </select>
-            </label>
             <label>
               Visibility
               <select

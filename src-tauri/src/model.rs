@@ -72,6 +72,10 @@ pub struct CalendarEvent {
     pub recurrence: Vec<String>,
     pub privacy: EventPrivacy,
     pub availability: EventAvailability,
+    /// True when the event has, or has requested, a Google Meet conference.
+    pub google_meet: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meet_link: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
     pub pending: bool,
@@ -126,6 +130,8 @@ pub struct EventInput {
     pub privacy: EventPrivacy,
     #[serde(default)]
     pub availability: EventAvailability,
+    #[serde(default)]
+    pub google_meet: bool,
 }
 
 impl EventInput {
@@ -158,6 +164,11 @@ impl EventInput {
         }
         // Always send explicit reminders so "None" never falls back to calendar defaults.
         event["reminders"] = serde_json::json!({"useDefault": false, "overrides": self.reminders});
+        if self.google_meet {
+            // The event ID doubles as the request ID, so a retried create
+            // never makes a second meeting.
+            event["conferenceData"] = meet_create_request(id);
+        }
         event
     }
 }
@@ -178,6 +189,7 @@ pub struct EventPatch {
     pub recurrence: Option<Vec<String>>,
     pub privacy: Option<EventPrivacy>,
     pub availability: Option<EventAvailability>,
+    pub google_meet: Option<bool>,
 }
 
 impl EventPatch {
@@ -636,6 +648,50 @@ fn parse_task_due(value: &str) -> Result<chrono::NaiveDate, String> {
         .map_err(|_| "due must be a valid YYYY-MM-DD date".into())
 }
 
+/// Asks Google to attach a new Meet conference; requires `conferenceDataVersion=1`.
+pub fn meet_create_request(request_id: &str) -> Value {
+    serde_json::json!({
+        "createRequest": {
+            "requestId": request_id,
+            "conferenceSolutionKey": {"type": "hangoutsMeet"}
+        }
+    })
+}
+
+/// True when a Google event carries, or has asked for, a Meet conference.
+pub fn has_google_meet(event: &Value) -> bool {
+    let Some(conference) = event.get("conferenceData").filter(|value| !value.is_null()) else {
+        return event.get("hangoutLink").and_then(Value::as_str).is_some();
+    };
+    [
+        "/conferenceSolution/key/type",
+        "/createRequest/conferenceSolutionKey/type",
+    ]
+    .iter()
+    .any(|pointer| conference.pointer(pointer).and_then(Value::as_str) == Some("hangoutsMeet"))
+}
+
+/// The join URL of an event's Meet conference, once Google has created it.
+pub fn google_meet_link(event: &Value) -> Option<String> {
+    if !has_google_meet(event) {
+        return None;
+    }
+    event
+        .get("hangoutLink")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            event
+                .pointer("/conferenceData/entryPoints")?
+                .as_array()?
+                .iter()
+                .find(|entry| entry.get("entryPointType").and_then(Value::as_str) == Some("video"))?
+                .get("uri")?
+                .as_str()
+        })
+        .filter(|link| link.starts_with("https://meet.google.com/"))
+        .map(str::to_owned)
+}
+
 pub fn event_time(value: &str, all_day: bool) -> Value {
     if all_day {
         serde_json::json!({"date": value})
@@ -682,6 +738,7 @@ mod tests {
             recurrence: vec![],
             privacy: EventPrivacy::Default,
             availability: EventAvailability::Busy,
+            google_meet: false,
         };
         assert!(valid.validate().is_ok());
         assert!(
@@ -1175,12 +1232,63 @@ mod tests {
             serde_json::json!({"useDefault": false, "overrides": []})
         );
 
+        assert!(google.get("conferenceData").is_none());
+
+        let meet: EventInput = serde_json::from_value(serde_json::json!({
+            "calendarId": "primary",
+            "title": "Planning",
+            "start": "2026-07-29T09:00:00Z",
+            "end": "2026-07-29T10:00:00Z",
+            "googleMeet": true
+        }))
+        .unwrap();
+        let google = meet.to_google_json("event");
+        assert_eq!(
+            google["conferenceData"]["createRequest"]["requestId"],
+            "event"
+        );
+        assert!(has_google_meet(&google));
+        assert!(google_meet_link(&google).is_none());
+
         let patch: EventPatch = serde_json::from_value(serde_json::json!({
             "description": null
         }))
         .unwrap();
         assert_eq!(patch.description, Some(None));
         assert!(patch.location.is_none());
+    }
+
+    #[test]
+    fn reads_meet_links_only_from_meet_conferences() {
+        let meet = serde_json::json!({
+            "hangoutLink": "https://meet.google.com/abc-defg-hij",
+            "conferenceData": {"conferenceSolution": {"key": {"type": "hangoutsMeet"}}}
+        });
+        assert_eq!(
+            google_meet_link(&meet).as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
+        let entry_points = serde_json::json!({
+            "conferenceData": {
+                "conferenceSolution": {"key": {"type": "hangoutsMeet"}},
+                "entryPoints": [
+                    {"entryPointType": "phone", "uri": "tel:+1-555"},
+                    {"entryPointType": "video", "uri": "https://meet.google.com/xyz"}
+                ]
+            }
+        });
+        assert_eq!(
+            google_meet_link(&entry_points).as_deref(),
+            Some("https://meet.google.com/xyz")
+        );
+        let zoom = serde_json::json!({
+            "conferenceData": {
+                "conferenceSolution": {"key": {"type": "addOn"}},
+                "entryPoints": [{"entryPointType": "video", "uri": "https://zoom.us/j/1"}]
+            }
+        });
+        assert!(!has_google_meet(&zoom));
+        assert!(google_meet_link(&zoom).is_none());
     }
 
     #[test]

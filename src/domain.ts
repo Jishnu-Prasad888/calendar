@@ -96,6 +96,10 @@ export type CalendarEvent = {
   recurrence?: readonly string[];
   privacy?: EventPrivacy;
   availability?: EventAvailability;
+  /** True when the event has, or has requested, a Google Meet conference. */
+  googleMeet?: boolean;
+  /** Join URL, present once Google has created the meeting. */
+  meetLink?: string;
   etag?: string;
   pending?: boolean;
 };
@@ -113,6 +117,8 @@ export type EventInput = {
   recurrence?: readonly string[];
   privacy?: EventPrivacy;
   availability?: EventAvailability;
+  /** Adds a Google Meet conference when true, removes it when false. */
+  googleMeet?: boolean;
 };
 
 export type EventPatch = Partial<

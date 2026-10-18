@@ -9,7 +9,7 @@ use crate::{
     model::{
         Account, AppSnapshot, CalendarEvent, EventInput, EventPatch, KeepNote, KeepNoteInput,
         OAuthConfiguration, Preferences, SyncState, SyncStatus, Task, TaskInput, TaskList,
-        event_time,
+        event_time, has_google_meet, meet_create_request,
     },
 };
 
@@ -441,6 +441,23 @@ fn apply_event_patch(raw: &mut Value, patch: &EventPatch) -> AppResult<Value> {
             Value::String(availability.google_transparency().into()),
         );
     }
+    if let Some(google_meet) = patch.google_meet {
+        let raw_event = Value::Object(object.clone());
+        if google_meet && !has_google_meet(&raw_event) {
+            let request_id = uuid::Uuid::new_v4().simple().to_string();
+            set(
+                &mut changed,
+                object,
+                "conferenceData",
+                meet_create_request(&request_id),
+            );
+        } else if !google_meet && has_google_meet(&raw_event) {
+            // Google drops the conference, and its hangoutLink, when
+            // conferenceData is cleared.
+            set(&mut changed, object, "conferenceData", Value::Null);
+            object.remove("hangoutLink");
+        }
+    }
     if changed.is_empty() {
         return Err(AppError::Validation("event patch is empty".into()));
     }
@@ -519,5 +536,31 @@ mod tests {
         assert_eq!(raw["visibility"], "private");
         assert_eq!(raw["transparency"], "transparent");
         assert!(google_patch.get("unknown").is_none());
+    }
+
+    #[test]
+    fn patch_adds_and_removes_google_meet() {
+        let mut raw = serde_json::json!({"id": "event", "summary": "Sync"});
+        let add = EventPatch {
+            google_meet: Some(true),
+            ..Default::default()
+        };
+        let google_patch = apply_event_patch(&mut raw, &add).unwrap();
+        assert_eq!(
+            google_patch["conferenceData"]["createRequest"]["conferenceSolutionKey"]["type"],
+            "hangoutsMeet"
+        );
+        // Asking again while a meeting exists changes nothing.
+        assert!(apply_event_patch(&mut raw, &add).is_err());
+
+        raw["hangoutLink"] = Value::String("https://meet.google.com/abc".into());
+        let remove = EventPatch {
+            google_meet: Some(false),
+            ..Default::default()
+        };
+        let google_patch = apply_event_patch(&mut raw, &remove).unwrap();
+        assert!(google_patch["conferenceData"].is_null());
+        assert!(google_patch.get("hangoutLink").is_none());
+        assert!(raw.get("hangoutLink").is_none());
     }
 }
