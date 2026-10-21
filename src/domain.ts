@@ -38,6 +38,8 @@ export type Preferences = {
   surfaceTransparency: number;
   /** Background blur radius in pixels, 0 to 40. */
   surfaceBlur: number;
+  /** Empty, an http(s) image URL, or `local:<name>` for an imported file. */
+  backgroundImage: string;
 };
 
 export type SyncState = {
@@ -203,6 +205,10 @@ export type IpcClient = {
     response: AttendeeResponse,
   ) => Promise<CalendarEvent>;
   updatePreferences: (input: Preferences) => Promise<Preferences>;
+  /** Copies a picked image into app data and returns its preference value. */
+  importBackgroundImage: (file: File) => Promise<string>;
+  /** Loads a `local:` background preference value. */
+  loadBackgroundImage: (value: string) => Promise<Blob>;
   updateGoogleOAuthConfiguration: (
     clientId: string,
     clientSecret?: string,

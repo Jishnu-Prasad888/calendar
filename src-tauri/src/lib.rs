@@ -1,4 +1,5 @@
 mod auth;
+mod background;
 mod commands;
 mod db;
 mod desktop;
@@ -59,6 +60,12 @@ pub fn run() {
             ))?;
             let preferences = tauri::async_runtime::block_on(repo.preferences())?;
             desktop::set_run_in_background(app.handle(), preferences.run_in_background);
+            let keep: Vec<&str> = background::stored_name(&preferences.background_image)
+                .into_iter()
+                .collect();
+            if let Err(error) = background::prune(&background::directory(app.handle())?, &keep) {
+                eprintln!("could not clean up unused background images: {error}");
+            }
             let client_secret = tauri::async_runtime::block_on(AuthService::stored_client_secret())
                 .unwrap_or_else(|error| {
                     eprintln!("could not load Google OAuth client secret: {error}");
@@ -130,6 +137,8 @@ pub fn run() {
             commands::respond_to_event,
             commands::update_preferences,
             commands::update_google_oauth_configuration,
+            commands::import_background_image,
+            commands::background_image,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Clay Calendar");

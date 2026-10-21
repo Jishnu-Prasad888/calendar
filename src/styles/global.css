@@ -147,6 +147,11 @@ button:disabled {
   background: var(--bg);
   transition: grid-template-columns 180ms ease;
 }
+/* Background image from Settings replaces the shell tint; panels keep theirs. */
+:root[data-background-image] .app-shell {
+  background: var(--app-background-image) center / cover no-repeat
+    var(--bg-solid);
+}
 .app-shell[data-sidebar='closed'] {
   grid-template-columns: 0 minmax(0, 1fr);
 }
@@ -1388,6 +1393,51 @@ button:disabled {
 .setting-row--stack {
   display: grid;
   align-items: start;
+}
+.background-image-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.background-image-preview {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 64px;
+  height: 37px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--app-background-image, none) center / cover no-repeat
+    var(--panel-inset);
+  box-shadow: var(--shadow-inset);
+}
+.background-image-url {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+.background-image-url input {
+  flex: 1;
+  min-width: 0;
+  height: 37px;
+  padding: 0 11px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--panel-inset);
+  box-shadow: var(--shadow-inset);
+  font-size: 0.69rem;
+}
+.background-image-url input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.background-image-controls .soft-button {
+  flex-shrink: 0;
+  font-size: 0.72rem;
 }
 .theme-options {
   display: grid;

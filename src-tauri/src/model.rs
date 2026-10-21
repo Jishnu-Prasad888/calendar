@@ -448,6 +448,8 @@ pub struct Preferences {
     pub run_in_background: bool,
     pub surface_transparency: u8,
     pub surface_blur: u8,
+    /// Empty, an http(s) URL, or `local:<name>` for an imported image.
+    pub background_image: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -501,6 +503,7 @@ impl Default for Preferences {
             run_in_background: true,
             surface_transparency: 0,
             surface_blur: 8,
+            background_image: String::new(),
         }
     }
 }
@@ -524,6 +527,9 @@ impl Preferences {
         }
         if self.surface_blur > MAX_SURFACE_BLUR {
             return Err(format!("surfaceBlur must be at most {MAX_SURFACE_BLUR}"));
+        }
+        if !crate::background::is_valid_preference(&self.background_image) {
+            return Err("backgroundImage must be an http(s) URL or an imported image".into());
         }
         if !(1..=1440).contains(&self.sync_interval_minutes) {
             return Err("syncIntervalMinutes must be between 1 and 1440".into());
@@ -895,6 +901,15 @@ mod tests {
         );
         let legacy: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!((legacy.surface_transparency, legacy.surface_blur), (0, 8));
+        assert_eq!(legacy.background_image, "");
+        assert!(
+            Preferences {
+                background_image: "file:///etc/passwd".into(),
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

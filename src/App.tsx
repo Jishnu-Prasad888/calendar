@@ -34,7 +34,7 @@ import { SearchResults } from './components/SearchResults';
 import { SettingsPage } from './components/SettingsPage';
 import { TasksPage } from './components/TasksPage';
 import { TopBar } from './components/TopBar';
-import { useAppearance } from './hooks/useAppearance';
+import { useAppearance, useBackgroundImage } from './hooks/useAppearance';
 import { addDays, dateKey } from './lib/date';
 import { errorMessage } from './lib/error';
 import { isIcsFile, parseIcs } from './lib/ics';
@@ -121,6 +121,10 @@ export function App() {
   const keepRequested = useRef(false);
 
   useAppearance(snapshot?.preferences);
+  useBackgroundImage(
+    snapshot?.preferences.backgroundImage,
+    ipc.loadBackgroundImage,
+  );
 
   const handleSyncState = useEffectEvent(async (syncState: SyncState) => {
     setSnapshot((current) => (current ? { ...current, syncState } : current));
@@ -615,6 +619,15 @@ export function App() {
       });
   };
 
+  const importBackgroundImage = (file: File) => {
+    void ipc
+      .importBackgroundImage(file)
+      .then((backgroundImage) => updatePreferences({ backgroundImage }))
+      .catch((reason: unknown) => {
+        setNotice(errorMessage(reason, 'Could not use that image.'));
+      });
+  };
+
   const changeView = (nextView: CalendarView) => {
     setView(nextView);
     if (snapshot && snapshot.preferences.defaultView !== nextView) {
@@ -909,6 +922,7 @@ export function App() {
             oauthConfiguration={snapshot.oauthConfiguration}
             busy={busy}
             onUpdate={updatePreferences}
+            onImportBackground={importBackgroundImage}
             onUpdateOAuth={updateGoogleOAuthConfiguration}
             onConnect={connectAccount}
             onRemove={removeAccount}

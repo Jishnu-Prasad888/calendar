@@ -18,6 +18,7 @@ const preferences: Preferences = {
   runInBackground: true,
   surfaceTransparency: 0,
   surfaceBlur: 8,
+  backgroundImage: '',
 };
 
 describe('SettingsPage', () => {
@@ -34,6 +35,7 @@ describe('SettingsPage', () => {
         }}
         busy={false}
         onUpdate={vi.fn()}
+        onImportBackground={vi.fn()}
         onUpdateOAuth={onUpdateOAuth}
         onConnect={vi.fn()}
         onRemove={vi.fn()}
@@ -71,6 +73,7 @@ describe('SettingsPage', () => {
         }}
         busy={false}
         onUpdate={vi.fn()}
+        onImportBackground={vi.fn()}
         onUpdateOAuth={vi.fn()}
         onConnect={vi.fn()}
         onRemove={vi.fn()}
@@ -104,6 +107,7 @@ describe('SettingsPage', () => {
         }}
         busy={false}
         onUpdate={onUpdate}
+        onImportBackground={vi.fn()}
         onUpdateOAuth={vi.fn()}
         onConnect={vi.fn()}
         onRemove={vi.fn()}
@@ -116,5 +120,72 @@ describe('SettingsPage', () => {
     fireEvent.blur(input);
 
     expect(onUpdate).toHaveBeenCalledWith({ syncIntervalMinutes: 5 });
+  });
+
+  it('sets a background image from a URL or a picked file', () => {
+    const onUpdate = vi.fn();
+    const onImportBackground = vi.fn();
+    render(
+      <SettingsPage
+        preferences={preferences}
+        accounts={[]}
+        syncState={{ status: 'idle' }}
+        oauthConfiguration={{
+          clientId: '',
+          clientSecretConfigured: false,
+        }}
+        busy={false}
+        onUpdate={onUpdate}
+        onImportBackground={onImportBackground}
+        onUpdateOAuth={vi.fn()}
+        onConnect={vi.fn()}
+        onRemove={vi.fn()}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const useUrl = screen.getByRole('button', { name: 'Use URL' });
+    const urlInput = screen.getByLabelText('Background image URL');
+    fireEvent.change(urlInput, { target: { value: 'not a url' } });
+    expect(useUrl).toBeDisabled();
+    fireEvent.change(urlInput, {
+      target: { value: ' https://example.com/sky.jpg ' },
+    });
+    fireEvent.click(useUrl);
+    expect(onUpdate).toHaveBeenCalledWith({
+      backgroundImage: 'https://example.com/sky.jpg',
+    });
+
+    const file = new File(['image'], 'sky.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Background image file'), {
+      target: { files: [file] },
+    });
+    expect(onImportBackground).toHaveBeenCalledWith(file);
+  });
+
+  it('removes the current background image', () => {
+    const onUpdate = vi.fn();
+    render(
+      <SettingsPage
+        preferences={{ ...preferences, backgroundImage: 'local:sky.png' }}
+        accounts={[]}
+        syncState={{ status: 'idle' }}
+        oauthConfiguration={{
+          clientId: '',
+          clientSecretConfigured: false,
+        }}
+        busy={false}
+        onUpdate={onUpdate}
+        onImportBackground={vi.fn()}
+        onUpdateOAuth={vi.fn()}
+        onConnect={vi.fn()}
+        onRemove={vi.fn()}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('Background image URL')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(onUpdate).toHaveBeenCalledWith({ backgroundImage: '' });
   });
 });

@@ -133,6 +133,7 @@ describe('demo IPC client', () => {
       runInBackground: true,
       surfaceTransparency: 0,
       surfaceBlur: 8,
+      backgroundImage: '',
     };
     invokeMock.mockResolvedValue(preferences);
 

@@ -24,8 +24,17 @@ type DemoStore = {
   events: CalendarEvent[];
   taskLists: readonly TaskList[];
   keepNotes: KeepNote[];
+  backgroundImages: Map<string, Blob>;
   nextId: number;
 };
+
+export const LOCAL_BACKGROUND_PREFIX = 'local:';
+
+/** File extension sent with an imported background image. */
+export function imageExtension(file: File): string {
+  const fromName = /\.([a-z0-9]+)$/i.exec(file.name)?.[1];
+  return (fromName ?? file.type.replace(/^image\//, '')).toLowerCase();
+}
 
 function atTime(date: Date, hour: number, minute = 0): string {
   const value = new Date(date);
@@ -96,6 +105,7 @@ export function createDemoStore(today = new Date()): DemoStore {
         runInBackground: true,
         surfaceTransparency: 0,
         surfaceBlur: 8,
+        backgroundImage: '',
       },
       oauthConfiguration: {
         clientId: 'demo.apps.googleusercontent.com',
@@ -245,6 +255,7 @@ export function createDemoStore(today = new Date()): DemoStore {
         updatedAt: today.toISOString(),
       },
     ],
+    backgroundImages: new Map(),
     nextId: 100,
   };
 }
@@ -467,6 +478,18 @@ export function createDemoClient(store = createDemoStore()): IpcClient {
       store.snapshot = { ...store.snapshot, preferences: { ...input } };
       return { ...input };
     },
+    importBackgroundImage: async (file) => {
+      const name = `demo-${String(store.nextId++)}.${imageExtension(file)}`;
+      store.backgroundImages.set(name, file);
+      return LOCAL_BACKGROUND_PREFIX + name;
+    },
+    loadBackgroundImage: async (value) => {
+      const image = store.backgroundImages.get(
+        value.slice(LOCAL_BACKGROUND_PREFIX.length),
+      );
+      if (!image) throw new Error('Background image was not found.');
+      return image;
+    },
     updateGoogleOAuthConfiguration: async (clientId, clientSecret) => {
       const configuration: OAuthConfiguration = {
         clientId,
@@ -522,6 +545,18 @@ export function createTauriClient(): IpcClient {
       }),
     updatePreferences: (input: Preferences) =>
       invoke<Preferences>('update_preferences', { input }),
+    importBackgroundImage: async (file) => {
+      const name = await invoke<string>(
+        'import_background_image',
+        new Uint8Array(await file.arrayBuffer()),
+        { headers: { 'x-file-extension': imageExtension(file) } },
+      );
+      return LOCAL_BACKGROUND_PREFIX + name;
+    },
+    loadBackgroundImage: (value) =>
+      invoke<ArrayBuffer>('background_image', {
+        name: value.slice(LOCAL_BACKGROUND_PREFIX.length),
+      }).then((bytes) => new Blob([bytes])),
     updateGoogleOAuthConfiguration: (clientId, clientSecret) =>
       invoke<OAuthConfiguration>('update_google_oauth_configuration', {
         clientId,

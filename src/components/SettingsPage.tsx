@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   BookOpen,
   Check,
   Cloud,
+  FolderOpen,
+  ImageIcon,
   ExternalLink,
   KeyRound,
   Laptop,
@@ -30,6 +32,7 @@ import {
   MAX_SURFACE_TRANSPARENCY,
   applySurfaceEffects,
 } from '../hooks/useAppearance';
+import { LOCAL_BACKGROUND_PREFIX } from '../lib/ipc';
 
 type SettingsPageProps = {
   preferences: Preferences;
@@ -38,6 +41,7 @@ type SettingsPageProps = {
   oauthConfiguration: OAuthConfiguration;
   busy: boolean;
   onUpdate: (input: PreferenceInput) => void;
+  onImportBackground: (file: File) => void;
   onUpdateOAuth: (clientId: string, clientSecret?: string) => void;
   onConnect: () => void;
   onRemove: (accountId: string) => void;
@@ -70,6 +74,127 @@ function CloudLink({ href, children }: { href: string; children: string }) {
     >
       {children} <ExternalLink size={13} />
     </button>
+  );
+}
+
+const BACKGROUND_IMAGE_TYPES =
+  'image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp';
+
+type BackgroundImageSettingProps = {
+  value: string;
+  onChange: (value: string) => void;
+  onImport: (file: File) => void;
+};
+
+function isImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+/** Sets the app background from a web address or a file on this device. */
+function BackgroundImageSetting({
+  value,
+  onChange,
+  onImport,
+}: BackgroundImageSettingProps) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const isLocal = value.startsWith(LOCAL_BACKGROUND_PREFIX);
+  const [draft, setDraft] = useState<string>();
+  const url = draft ?? (isLocal ? '' : value);
+  const trimmed = url.trim();
+  const urlValid = isImageUrl(trimmed);
+
+  const applyUrl = () => {
+    if (!urlValid) return;
+    setDraft(undefined);
+    if (trimmed !== value) onChange(trimmed);
+  };
+
+  return (
+    <div className="setting-row setting-row--stack background-image-row">
+      <span>
+        <strong>Background image</strong>
+        <small>
+          Shown behind the app. Raise Transparency to see more of it.
+        </small>
+      </span>
+      <div className="background-image-controls">
+        <span
+          className="background-image-preview"
+          data-empty={!value}
+          aria-label={
+            value
+              ? isLocal
+                ? 'Background image from a file'
+                : 'Background image from a URL'
+              : 'No background image'
+          }
+          role="img"
+        >
+          {!value && <ImageIcon size={18} />}
+        </span>
+        <form
+          className="background-image-url"
+          onSubmit={(event) => {
+            event.preventDefault();
+            applyUrl();
+          }}
+        >
+          <input
+            aria-label="Background image URL"
+            type="url"
+            placeholder={
+              isLocal ? 'Using an image file' : 'https://example.com/image.jpg'
+            }
+            value={url}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <button
+            type="submit"
+            className="soft-button"
+            disabled={!urlValid || trimmed === value}
+          >
+            Use URL
+          </button>
+        </form>
+        <button
+          type="button"
+          className="soft-button"
+          onClick={() => fileInput.current?.click()}
+        >
+          <FolderOpen size={15} /> Choose file
+        </button>
+        <input
+          ref={fileInput}
+          className="sr-only"
+          type="file"
+          accept={BACKGROUND_IMAGE_TYPES}
+          tabIndex={-1}
+          aria-label="Background image file"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) onImport(file);
+          }}
+        />
+        {value && (
+          <button
+            type="button"
+            className="soft-button"
+            onClick={() => {
+              setDraft(undefined);
+              onChange('');
+            }}
+          >
+            <X size={15} /> Remove
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -139,6 +264,7 @@ export function SettingsPage({
   oauthConfiguration,
   busy,
   onUpdate,
+  onImportBackground,
   onUpdateOAuth,
   onConnect,
   onRemove,
@@ -253,6 +379,11 @@ export function SettingsPage({
               <code>{preferences.accentColor}</code>
             </label>
           </div>
+          <BackgroundImageSetting
+            value={preferences.backgroundImage}
+            onChange={(backgroundImage) => onUpdate({ backgroundImage })}
+            onImport={onImportBackground}
+          />
           <SliderSetting
             label="Transparency"
             description="See through the app background, panels and dialogs."

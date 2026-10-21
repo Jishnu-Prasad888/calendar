@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, State};
 
 use crate::{
-    AppState, desktop,
+    AppState, background, desktop,
     error::{AppError, AppResult},
     google::ApiError,
     model::{
@@ -511,6 +511,41 @@ fn google_error(error: ApiError) -> AppError {
     } else {
         AppError::Google(error.to_string())
     }
+}
+
+/// Copies a picked image into app data. The body is the raw file bytes and the
+/// `x-file-extension` header names its type. Returns the stored file name.
+#[tauri::command]
+pub async fn import_background_image(
+    request: tauri::ipc::Request<'_>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(AppError::Validation(
+            "background image must be sent as raw bytes".into(),
+        ));
+    };
+    let extension = request
+        .headers()
+        .get("x-file-extension")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let dir = background::directory(&app)?;
+    let name = background::save(&dir, bytes, extension)?;
+    let current = state.repo.preferences().await?;
+    let mut keep = vec![name.as_str()];
+    keep.extend(background::stored_name(&current.background_image));
+    if let Err(error) = background::prune(&dir, &keep) {
+        eprintln!("could not clean up unused background images: {error}");
+    }
+    Ok(name)
+}
+
+#[tauri::command]
+pub async fn background_image(name: String, app: AppHandle) -> AppResult<tauri::ipc::Response> {
+    let bytes = background::read(&background::directory(&app)?, &name)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[cfg(test)]
