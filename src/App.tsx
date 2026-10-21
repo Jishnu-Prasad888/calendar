@@ -1,4 +1,13 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import {
+  Activity,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { listen } from '@tauri-apps/api/event';
 import {
   AlertCircle,
@@ -24,21 +33,64 @@ import type {
 } from './domain';
 import { AppSidebar, type AppPage } from './components/AppSidebar';
 import { CalendarPage } from './components/CalendarPage';
-import {
-  EventDialog,
-  type DialogAnchor,
-  type EventDraft,
-} from './components/EventDialog';
-import { KeepPage } from './components/KeepPage';
+import type { DialogAnchor, EventDraft } from './components/EventDialog';
+import { LoadingState } from './components/LoadingState';
 import { SearchResults } from './components/SearchResults';
-import { SettingsPage } from './components/SettingsPage';
-import { TasksPage } from './components/TasksPage';
 import { TopBar } from './components/TopBar';
 import { useAppearance, useBackgroundImage } from './hooks/useAppearance';
 import { addDays, dateKey } from './lib/date';
 import { errorMessage } from './lib/error';
 import { isIcsFile, parseIcs } from './lib/ics';
 import { ipc } from './lib/ipc';
+import { preloadable } from './lib/preloadable';
+
+// Off the startup path: these load after the calendar is on screen.
+const [EventDialog, preloadEventDialog] = preloadable(() =>
+  import('./components/EventDialog').then((module) => module.EventDialog),
+);
+const [KeepPage, preloadKeepPage] = preloadable(() =>
+  import('./components/KeepPage').then((module) => module.KeepPage),
+);
+const [SettingsPage, preloadSettingsPage] = preloadable(() =>
+  import('./components/SettingsPage').then((module) => module.SettingsPage),
+);
+const [TasksPage, preloadTasksPage] = preloadable(() =>
+  import('./components/TasksPage').then((module) => module.TasksPage),
+);
+
+function preloadLazyChunks() {
+  void Promise.all([
+    preloadEventDialog(),
+    preloadKeepPage(),
+    preloadSettingsPage(),
+    preloadTasksPage(),
+  ]);
+}
+
+/** Keeps a visited page's state while hidden; shows a spinner on first load. */
+function PageActivity({
+  active,
+  label,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Activity mode={active ? 'visible' : 'hidden'}>
+      <Suspense
+        fallback={
+          <main className="page-surface">
+            <LoadingState label={label} />
+          </main>
+        }
+      >
+        {children}
+      </Suspense>
+    </Activity>
+  );
+}
 
 type OpenDialog = {
   key: string;
@@ -98,6 +150,12 @@ export function App() {
   const [taskLists, setTaskLists] = useState<readonly TaskList[]>([]);
   const [keepNotes, setKeepNotes] = useState<KeepNote[]>([]);
   const [page, setPage] = useState<AppPage>('calendar');
+  const [visitedPages, setVisitedPages] = useState<ReadonlySet<AppPage>>(
+    () => new Set(['calendar']),
+  );
+  if (!visitedPages.has(page)) {
+    setVisitedPages(new Set(visitedPages).add(page));
+  }
   const [view, setView] = useState<CalendarView>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [visibleCalendarIds, setVisibleCalendarIds] = useState<
@@ -189,6 +247,11 @@ export function App() {
         if (!active) return;
         setSnapshot(value);
         setView(value.preferences.defaultView);
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(preloadLazyChunks, { timeout: 2000 });
+        } else {
+          setTimeout(preloadLazyChunks, 300);
+        }
         setVisibleCalendarIds(
           new Set(
             value.calendars
@@ -206,8 +269,9 @@ export function App() {
     };
   }, []);
 
+  const ready = snapshot !== undefined;
   useEffect(() => {
-    if (!snapshot || view !== 'year') return;
+    if (!ready || view !== 'year') return;
     const start = new Date(currentDate.getFullYear(), 0, 1);
     const end = new Date(currentDate.getFullYear() + 1, 0, 1);
     eventRange.current = {
@@ -221,7 +285,7 @@ export function App() {
         setNotice(errorMessage(reason, 'Could not load events.')),
       )
       .finally(() => setEventsLoading(false));
-  }, [currentDate, snapshot, view]);
+  }, [currentDate, ready, view]);
 
   useEffect(() => {
     if (page !== 'tasks' || taskLists.length > 0) return;
@@ -788,6 +852,11 @@ export function App() {
     );
   };
 
+  const eventDates = useMemo(
+    () => new Set(events.map((event) => event.start.slice(0, 10))),
+    [events],
+  );
+
   if (fatalError) {
     return (
       <main className="boot-state">
@@ -818,7 +887,6 @@ export function App() {
     );
   }
 
-  const eventDates = new Set(events.map((event) => event.start.slice(0, 10)));
   return (
     <div className="app-shell" data-sidebar={sidebarOpen ? 'open' : 'closed'}>
       <TopBar
@@ -877,8 +945,11 @@ export function App() {
         onSync={syncNow}
       />
       <div className="content-area">
-        {page === 'calendar' && (
+        {/* The calendar stays mounted so returning to it never rebuilds the
+            grid; other pages stay alive in an Activity once visited. */}
+        <div className="calendar-slot" hidden={page !== 'calendar'}>
           <CalendarPage
+            active={page === 'calendar'}
             currentDate={currentDate}
             view={view}
             events={events}
@@ -892,42 +963,48 @@ export function App() {
             onOpenEvent={openEvent}
             onMoveEvent={moveEvent}
           />
+        </div>
+        {visitedPages.has('tasks') && (
+          <PageActivity active={page === 'tasks'} label="Loading tasks…">
+            <TasksPage
+              taskLists={taskLists}
+              loading={tasksLoading}
+              error={tasksError}
+              onCreate={createTask}
+              onUpdate={updateTask}
+              onDelete={deleteTask}
+            />
+          </PageActivity>
         )}
-        {page === 'tasks' && (
-          <TasksPage
-            taskLists={taskLists}
-            loading={tasksLoading}
-            error={tasksError}
-            onCreate={createTask}
-            onUpdate={updateTask}
-            onDelete={deleteTask}
-          />
+        {visitedPages.has('keep') && (
+          <PageActivity active={page === 'keep'} label="Loading notes…">
+            <KeepPage
+              notes={keepNotes}
+              loading={keepLoading}
+              error={keepError}
+              query={searchQuery}
+              onCreate={createKeepNote}
+              onUpdate={updateKeepNote}
+              onDelete={deleteKeepNote}
+            />
+          </PageActivity>
         )}
-        {page === 'keep' && (
-          <KeepPage
-            notes={keepNotes}
-            loading={keepLoading}
-            error={keepError}
-            query={searchQuery}
-            onCreate={createKeepNote}
-            onUpdate={updateKeepNote}
-            onDelete={deleteKeepNote}
-          />
-        )}
-        {page === 'settings' && (
-          <SettingsPage
-            preferences={snapshot.preferences}
-            accounts={snapshot.accounts}
-            syncState={snapshot.syncState}
-            oauthConfiguration={snapshot.oauthConfiguration}
-            busy={busy}
-            onUpdate={updatePreferences}
-            onImportBackground={importBackgroundImage}
-            onUpdateOAuth={updateGoogleOAuthConfiguration}
-            onConnect={connectAccount}
-            onRemove={removeAccount}
-            onSync={syncNow}
-          />
+        {visitedPages.has('settings') && (
+          <PageActivity active={page === 'settings'} label="Loading settings…">
+            <SettingsPage
+              preferences={snapshot.preferences}
+              accounts={snapshot.accounts}
+              syncState={snapshot.syncState}
+              oauthConfiguration={snapshot.oauthConfiguration}
+              busy={busy}
+              onUpdate={updatePreferences}
+              onImportBackground={importBackgroundImage}
+              onUpdateOAuth={updateGoogleOAuthConfiguration}
+              onConnect={connectAccount}
+              onRemove={removeAccount}
+              onSync={syncNow}
+            />
+          </PageActivity>
         )}
       </div>
       {page === 'calendar' && searchQuery.trim() && (
@@ -942,18 +1019,20 @@ export function App() {
         />
       )}
       {dialog && (
-        <EventDialog
-          key={dialog.key}
-          event={dialog.event}
-          draft={dialog.draft}
-          anchor={dialog.anchor}
-          calendars={snapshot.calendars}
-          busy={busy}
-          onClose={() => setDialog(undefined)}
-          onSave={saveEvent}
-          onDelete={deleteEvent}
-          onRespond={respondToEvent}
-        />
+        <Suspense>
+          <EventDialog
+            key={dialog.key}
+            event={dialog.event}
+            draft={dialog.draft}
+            anchor={dialog.anchor}
+            calendars={snapshot.calendars}
+            busy={busy}
+            onClose={() => setDialog(undefined)}
+            onSave={saveEvent}
+            onDelete={deleteEvent}
+            onRespond={respondToEvent}
+          />
+        </Suspense>
       )}
       {fileDragActive && (
         <div className="file-drop-overlay" aria-hidden="true">

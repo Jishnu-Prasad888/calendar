@@ -1,3 +1,5 @@
+import type { CalendarEvent } from '../domain';
+
 const DAY_MS = 86_400_000;
 
 export function dateKey(date: Date): string {
@@ -60,4 +62,30 @@ export function rangesOverlap(
 
 export function daysBetween(start: Date, end: Date): number {
   return Math.max(1, Math.round((end.getTime() - start.getTime()) / DAY_MS));
+}
+
+const SCROLL_LEAD_MINUTES = 30;
+
+/**
+ * Time-grid scroll position for today: a little before the first timed event,
+ * or before the current time when today has none.
+ */
+export function scrollTimeFor(
+  events: readonly CalendarEvent[],
+  now: Date,
+): string {
+  const today = dateKey(now);
+  let first: Date | undefined;
+  for (const event of events) {
+    if (event.allDay) continue;
+    const start = new Date(event.start);
+    if (dateKey(start) === today && (!first || start < first)) first = start;
+  }
+  const target = first ?? now;
+  const minutes = Math.max(
+    0,
+    target.getHours() * 60 + target.getMinutes() - SCROLL_LEAD_MINUTES,
+  );
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:00`;
 }

@@ -1,3 +1,12 @@
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin, {
@@ -15,7 +24,7 @@ import type {
 import { LockKeyhole } from 'lucide-react';
 import type { CalendarEvent, CalendarView, EventPatch } from '../domain';
 import { eventTextColor } from '../lib/color';
-import { addDays, dateKey, datesInMonth } from '../lib/date';
+import { addDays, dateKey, datesInMonth, scrollTimeFor } from '../lib/date';
 import type { DialogAnchor } from './EventDialog';
 
 type Selection = {
@@ -25,6 +34,8 @@ type Selection = {
 };
 
 type CalendarPageProps = {
+  /** False while another page is shown; the calendar stays mounted. */
+  active: boolean;
   currentDate: Date;
   view: CalendarView;
   events: readonly CalendarEvent[];
@@ -46,6 +57,37 @@ const fullCalendarView: Record<Exclude<CalendarView, 'year'>, string> = {
   schedule: 'listMonth',
   'multi-day': 'multiDay',
 };
+
+// Stable option values: FullCalendar re-processes any option whose identity
+// changes, so these live outside the component.
+const plugins = [dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin];
+const customViews = {
+  multiDay: { type: 'timeGrid', duration: { days: 4 } },
+};
+
+function renderEvent(argument: EventContentArg) {
+  const { start, end, allDay } = argument.event;
+  // Events of 30 minutes or less are too short for a wrapped time/title
+  // layout, so they render on a single clipped line instead.
+  const compact =
+    !allDay &&
+    start !== null &&
+    (end === null || end.getTime() - start.getTime() <= 30 * 60_000);
+  return (
+    <span
+      className="calendar-event"
+      data-pending={Boolean(argument.event.extendedProps.pending)}
+      data-compact={compact}
+    >
+      <i aria-hidden="true" />
+      <b>{argument.timeText}</b>
+      <span>{argument.event.title}</span>
+      {argument.event.extendedProps.readOnly === true && (
+        <LockKeyhole size={11} aria-label="Read-only" />
+      )}
+    </span>
+  );
+}
 
 function eventPatchFromChange(event: EventDropArg['event']): EventPatch {
   return {
@@ -101,15 +143,20 @@ function YearView({
   onSelectMonth: (date: Date) => void;
 }) {
   const year = date.getFullYear();
+  const today = dateKey(new Date());
+  const eventCounts = new Array<number>(12).fill(0);
+  const eventDays = new Set<string>();
+  for (const event of events) {
+    const start = new Date(event.start);
+    if (start.getFullYear() !== year) continue;
+    eventCounts[start.getMonth()] += 1;
+    eventDays.add(event.start.slice(0, 10));
+  }
   return (
     <div className="year-grid" aria-label={`${String(year)} calendar`}>
       {Array.from({ length: 12 }, (_, month) => {
         const monthDate = new Date(year, month, 1);
-        const monthEvents = events.filter(
-          (event) =>
-            new Date(event.start).getMonth() === month &&
-            new Date(event.start).getFullYear() === year,
-        );
+        const monthEventCount = eventCounts[month];
         const offset = (monthDate.getDay() - weekStartsOn + 7) % 7;
         return (
           <button
@@ -135,23 +182,21 @@ function YearView({
                 <i key={`blank-${String(blank)}`} />
               ))}
               {datesInMonth(monthDate).map((day) => {
-                const hasEvent = monthEvents.some(
-                  (event) => event.start.slice(0, 10) === dateKey(day),
-                );
+                const key = dateKey(day);
                 return (
                   <i
-                    key={dateKey(day)}
-                    data-event={hasEvent}
-                    data-today={dateKey(day) === dateKey(new Date())}
+                    key={key}
+                    data-event={eventDays.has(key)}
+                    data-today={key === today}
                   >
                     {day.getDate()}
                   </i>
                 );
               })}
             </span>
-            {monthEvents.length > 0 && (
+            {monthEventCount > 0 && (
               <small>
-                {monthEvents.length} event{monthEvents.length === 1 ? '' : 's'}
+                {monthEventCount} event{monthEventCount === 1 ? '' : 's'}
               </small>
             )}
           </button>
@@ -161,25 +206,178 @@ function YearView({
   );
 }
 
+type CalendarHandlers = Pick<
+  CalendarPageProps,
+  | 'onDateChange'
+  | 'onViewChange'
+  | 'onRangeChange'
+  | 'onCreate'
+  | 'onOpenEvent'
+  | 'onMoveEvent'
+> & { events: readonly CalendarEvent[] };
+
+function calendarHandlers(latest: RefObject<CalendarHandlers>) {
+  const source = (id: string) =>
+    latest.current.events.find((event) => event.id === id);
+  return {
+    change: (argument: EventDropArg | EventResizeDoneArg) => {
+      const event = source(argument.event.id);
+      if (!event) return;
+      void latest.current
+        .onMoveEvent(event, eventPatchFromChange(argument.event))
+        .then((success) => {
+          if (!success) argument.revert();
+        });
+    },
+    eventClick: (argument: EventClickArg) => {
+      const event = source(argument.event.id);
+      if (event) {
+        latest.current.onOpenEvent(
+          event,
+          rectAnchor(argument.el.getBoundingClientRect()),
+        );
+      }
+    },
+    select: (argument: DateSelectArg) => {
+      latest.current.onCreate(
+        {
+          start: argument.startStr,
+          end: argument.endStr,
+          allDay: argument.allDay,
+        },
+        selectionAnchor(argument.jsEvent),
+      );
+    },
+    dates: (argument: DatesSetArg) => {
+      latest.current.onRangeChange(argument.start, argument.end);
+    },
+  };
+}
+
+/**
+ * Keeps the latest callbacks in a ref so the memoized surface, and the
+ * FullCalendar options it passes, only change when calendar data changes.
+ */
 export function CalendarPage({
+  active,
   currentDate,
   view,
   events,
   visibleCalendarIds,
   weekStartsOn,
   loading,
-  onDateChange,
-  onViewChange,
-  onRangeChange,
-  onCreate,
-  onOpenEvent,
-  onMoveEvent,
+  ...callbacks
 }: CalendarPageProps) {
-  const visibleEvents = events.filter((event) =>
-    visibleCalendarIds.has(event.calendarId),
+  const handlers = useRef<CalendarHandlers>({ ...callbacks, events });
+  useLayoutEffect(() => {
+    handlers.current = { ...callbacks, events };
+  });
+  return (
+    <CalendarSurface
+      active={active}
+      currentDate={currentDate}
+      view={view}
+      events={events}
+      visibleCalendarIds={visibleCalendarIds}
+      weekStartsOn={weekStartsOn}
+      loading={loading}
+      handlers={handlers}
+    />
+  );
+}
+
+const CalendarSurface = memo(function CalendarSurface({
+  active,
+  currentDate,
+  view,
+  events,
+  visibleCalendarIds,
+  weekStartsOn,
+  loading,
+  handlers: latest,
+}: Pick<
+  CalendarPageProps,
+  | 'active'
+  | 'currentDate'
+  | 'view'
+  | 'events'
+  | 'visibleCalendarIds'
+  | 'weekStartsOn'
+  | 'loading'
+> & { handlers: RefObject<CalendarHandlers> }) {
+  const calendarRef = useRef<FullCalendar>(null);
+
+  const visibleEvents = useMemo(
+    () => events.filter((event) => visibleCalendarIds.has(event.calendarId)),
+    [events, visibleCalendarIds],
+  );
+  const calendarEvents = useMemo(
+    () =>
+      visibleEvents.map((event) => ({
+        id: event.id,
+        title: event.title,
+        start: event.start,
+        end: event.end,
+        allDay: event.allDay,
+        backgroundColor: event.color,
+        borderColor: event.color,
+        textColor: eventTextColor(event.color),
+        editable: !event.readOnly,
+        extendedProps: { readOnly: event.readOnly, pending: event.pending },
+      })),
+    [visibleEvents],
   );
 
-  if (view === 'year') {
+  const fullView = view === 'year' ? undefined : fullCalendarView[view];
+  // Navigate the mounted calendar instead of rebuilding it on every change.
+  // FullCalendar re-renders synchronously, so it runs after React's commit.
+  useEffect(() => {
+    if (!fullView) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      const api = calendarRef.current?.getApi();
+      if (cancelled || !api) return;
+      if (api.view.type !== fullView) api.changeView(fullView, currentDate);
+      else if (api.getDate().getTime() !== currentDate.getTime()) {
+        api.gotoDate(currentDate);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fullView, currentDate]);
+
+  // A hidden calendar can't measure itself, so re-measure when it is shown.
+  useEffect(() => {
+    if (!active) return;
+    queueMicrotask(() => calendarRef.current?.getApi().updateSize());
+  }, [active]);
+
+  // Time grids open just before today's first event. FullCalendar applies
+  // scrollTime on navigation; the first event load needs an explicit scroll
+  // because it arrives after the grid has already been laid out.
+  const scrollTime = useMemo(
+    () => scrollTimeFor(visibleEvents, new Date()),
+    [visibleEvents],
+  );
+  const initialScroll = useRef<'waiting' | 'loading' | 'done'>('waiting');
+  useEffect(() => {
+    if (initialScroll.current === 'done') return;
+    if (loading) {
+      initialScroll.current = 'loading';
+      return;
+    }
+    if (initialScroll.current !== 'loading') return;
+    initialScroll.current = 'done';
+    queueMicrotask(() =>
+      calendarRef.current?.getApi().scrollToTime(scrollTime),
+    );
+  }, [loading, scrollTime]);
+
+  // Created once; each handler reads the latest callbacks when it runs.
+  const [handle] = useState(() => calendarHandlers(latest));
+
+  if (!fullView) {
     return (
       <main className="calendar-surface calendar-surface--year">
         {loading && (
@@ -190,74 +388,13 @@ export function CalendarPage({
           events={visibleEvents}
           weekStartsOn={weekStartsOn}
           onSelectMonth={(date) => {
-            onDateChange(date);
-            onViewChange('month');
+            latest.current.onDateChange(date);
+            latest.current.onViewChange('month');
           }}
         />
       </main>
     );
   }
-
-  const handleDrop = (argument: EventDropArg) => {
-    const source = events.find((event) => event.id === argument.event.id);
-    if (!source) return;
-    void onMoveEvent(source, eventPatchFromChange(argument.event)).then(
-      (success) => {
-        if (!success) argument.revert();
-      },
-    );
-  };
-  const handleResize = (argument: EventResizeDoneArg) => {
-    const source = events.find((event) => event.id === argument.event.id);
-    if (!source) return;
-    void onMoveEvent(source, eventPatchFromChange(argument.event)).then(
-      (success) => {
-        if (!success) argument.revert();
-      },
-    );
-  };
-  const handleEventClick = (argument: EventClickArg) => {
-    const source = events.find((event) => event.id === argument.event.id);
-    if (source) {
-      onOpenEvent(source, rectAnchor(argument.el.getBoundingClientRect()));
-    }
-  };
-  const handleSelect = (argument: DateSelectArg) => {
-    onCreate(
-      {
-        start: argument.startStr,
-        end: argument.endStr,
-        allDay: argument.allDay,
-      },
-      selectionAnchor(argument.jsEvent),
-    );
-  };
-  const handleDates = (argument: DatesSetArg) => {
-    onRangeChange(argument.start, argument.end);
-  };
-  const renderEvent = (argument: EventContentArg) => {
-    const { start, end, allDay } = argument.event;
-    // Events of 30 minutes or less are too short for a wrapped time/title
-    // layout, so they render on a single clipped line instead.
-    const compact =
-      !allDay &&
-      start !== null &&
-      (end === null || end.getTime() - start.getTime() <= 30 * 60_000);
-    return (
-      <span
-        className="calendar-event"
-        data-pending={Boolean(argument.event.extendedProps.pending)}
-        data-compact={compact}
-      >
-        <i aria-hidden="true" />
-        <b>{argument.timeText}</b>
-        <span>{argument.event.title}</span>
-        {argument.event.extendedProps.readOnly === true && (
-          <LockKeyhole size={11} aria-label="Read-only" />
-        )}
-      </span>
-    );
-  };
 
   return (
     <main className="calendar-surface">
@@ -265,11 +402,11 @@ export function CalendarPage({
         <div className="surface-loader" aria-label="Loading events" />
       )}
       <FullCalendar
-        key={`${view}-${dateKey(currentDate)}`}
-        plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
-        initialView={fullCalendarView[view]}
+        ref={calendarRef}
+        plugins={plugins}
+        initialView={fullView}
         initialDate={currentDate}
-        views={{ multiDay: { type: 'timeGrid', duration: { days: 4 } } }}
+        views={customViews}
         headerToolbar={false}
         firstDay={weekStartsOn}
         height="100%"
@@ -280,30 +417,19 @@ export function CalendarPage({
         dayMaxEvents={4}
         slotMinTime="00:00:00"
         slotMaxTime="24:00:00"
-        scrollTime="00:00:00"
+        scrollTime={scrollTime}
         slotDuration="00:30:00"
         slotEventOverlap={false}
         eventMinHeight={20}
         allDaySlot
-        events={visibleEvents.map((event) => ({
-          id: event.id,
-          title: event.title,
-          start: event.start,
-          end: event.end,
-          allDay: event.allDay,
-          backgroundColor: event.color,
-          borderColor: event.color,
-          textColor: eventTextColor(event.color),
-          editable: !event.readOnly,
-          extendedProps: { readOnly: event.readOnly, pending: event.pending },
-        }))}
-        datesSet={handleDates}
-        select={handleSelect}
-        eventClick={handleEventClick}
-        eventDrop={handleDrop}
-        eventResize={handleResize}
+        events={calendarEvents}
+        datesSet={handle.dates}
+        select={handle.select}
+        eventClick={handle.eventClick}
+        eventDrop={handle.change}
+        eventResize={handle.change}
         eventContent={renderEvent}
       />
     </main>
   );
-}
+});

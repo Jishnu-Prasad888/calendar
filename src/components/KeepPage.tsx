@@ -27,6 +27,7 @@ import {
   indentChecklistSubtree,
   insertChecklistItemAfterSubtree,
 } from '../lib/checklist';
+import { LoadingState } from './LoadingState';
 import { errorMessage } from '../lib/error';
 
 type KeepPageProps = {
@@ -510,7 +511,9 @@ export function KeepPage({
         </p>
       )}
 
-      {!loading && visibleNotes.length === 0 ? (
+      {loading && notes.length === 0 ? (
+        <LoadingState label="Loading notes…" />
+      ) : visibleNotes.length === 0 ? (
         <div className="keep-empty">
           <StickyNote size={35} />
           <h2>{query.trim() ? 'No matching notes' : `No ${filter} yet`}</h2>

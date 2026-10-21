@@ -8,7 +8,7 @@ describe('App', () => {
     expect(await screen.findByText('Clay Calendar')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-    fireEvent.change(screen.getByPlaceholderText('Add title'), {
+    fireEvent.change(await screen.findByPlaceholderText('Add title'), {
       target: { value: 'Architecture sync' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));

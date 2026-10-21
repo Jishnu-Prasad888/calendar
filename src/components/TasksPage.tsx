@@ -12,6 +12,7 @@ import {
 import type { Task, TaskInput, TaskList } from '../domain';
 import { dateKey } from '../lib/date';
 import { errorMessage } from '../lib/error';
+import { LoadingState } from './LoadingState';
 import { DateTimePicker } from './DateTimePicker';
 
 type TasksPageProps = {
@@ -187,7 +188,9 @@ export function TasksPage({
         </p>
       )}
 
-      {taskLists.length === 0 ? (
+      {loading && taskLists.length === 0 ? (
+        <LoadingState label="Loading tasks…" />
+      ) : taskLists.length === 0 ? (
         <div className="tasks-page__empty">
           <ClipboardList size={30} />
           <strong>No task lists available</strong>

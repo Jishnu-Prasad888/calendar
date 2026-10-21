@@ -9,9 +9,15 @@
       content="A private desktop client for Google Calendar"
     />
     <title>Clay Calendar</title>
+    <script src="/boot.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="boot-state">
+        <div class="large-spinner"></div>
+        <h1>Opening Clay Calendar</h1>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

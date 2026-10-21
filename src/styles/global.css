@@ -54,7 +54,20 @@
   color-scheme: dark;
 }
 
-/* Surface effects: set from the Transparency and Blur sliders in Settings. */
+/* Surface effects: set from the Transparency and Blur sliders in Settings.
+   Panel blur only shows through translucent panels, so opaque panels skip it:
+   backdrop-filter is one of the costliest effects for the webview to paint. */
+:root:not([data-translucent])
+  :is(
+    .task-editor,
+    .task-editor > header,
+    .setup-guide-modal,
+    .event-dialog,
+    .event-dialog > header,
+    .keep-editor
+  ) {
+  backdrop-filter: none;
+}
 :root {
   --surface-opacity: 100%;
   --surface-blur: 8px;
@@ -601,18 +614,71 @@ button:disabled {
   border-radius: 20px;
   background: var(--panel-strong);
   box-shadow: var(--shadow-raised);
+  /* Repaints inside the calendar stay inside it. */
+  contain: layout paint;
 }
 .surface-loader {
   position: absolute;
   z-index: 8;
-  top: 10px;
-  right: 12px;
-  width: 18px;
-  height: 18px;
-  border: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  opacity: 0;
+  /* Quick local loads finish before the bar would only flash. */
+  animation: loader-appear 120ms ease-out 150ms forwards;
+  pointer-events: none;
+}
+.surface-loader::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: 3px;
+  background: var(--accent);
+  animation: loader-progress 1.1s ease-in-out infinite;
+}
+@keyframes loader-appear {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes loader-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.loading-state {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  min-height: 240px;
+  height: 100%;
+  color: var(--muted);
+  font-size: 0.8rem;
+  opacity: 0;
+  animation: loader-appear 160ms ease-out 120ms forwards;
+}
+/* Pages fade in when opened or revealed again. */
+.content-area > .calendar-surface,
+.content-area > .page-surface,
+.calendar-slot > .calendar-surface {
+  animation: page-in 160ms ease-out;
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.calendar-slot {
+  height: 100%;
 }
 
 /* FullCalendar keeps a crisp, familiar data grid inside the softer app chrome. */

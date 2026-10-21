@@ -18,6 +18,8 @@ export function applySurfaceEffects(transparency: number, blur: number): void {
   const style = document.documentElement.style;
   style.setProperty('--surface-opacity', `${String(100 - transparency)}%`);
   style.setProperty('--surface-blur', `${String(blur)}px`);
+  if (transparency > 0) document.documentElement.dataset.translucent = 'true';
+  else delete document.documentElement.dataset.translucent;
 }
 
 export function useAppearance(preferences: Preferences | undefined): void {
